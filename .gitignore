@@ -1,0 +1,24 @@
+# Build outputs
+build/
+bin/
+cmake-build-*/
+
+# STM32CubeIDE / generated build outputs
+stm32_port/Debug/
+stm32_port/Release/
+
+# Keep hidden project files needed by the repository, ignore local IDE metadata only
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.cache
+
+# Python cache
+__pycache__/
+*.pyc

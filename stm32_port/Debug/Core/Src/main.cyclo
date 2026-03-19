@@ -1,0 +1,7 @@
+../Core/Src/main.c:74:6:SSD1963_Init	1
+../Core/Src/main.c:134:10:SSD1963_ReadID	1
+../Core/Src/main.c:143:6:LCD_FillColor	2
+../Core/Src/main.c:171:5:main	1
+../Core/Src/main.c:242:6:SystemClock_Config	3
+../Core/Src/main.c:296:6:HAL_TIM_PeriodElapsedCallback	2
+../Core/Src/main.c:314:6:Error_Handler	1

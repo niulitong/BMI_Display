@@ -1,0 +1,7 @@
+../Core/Src/main.c:74:6:SSD1963_Init	8	static
+../Core/Src/main.c:134:10:SSD1963_ReadID	16	static
+../Core/Src/main.c:143:6:LCD_FillColor	24	static
+../Core/Src/main.c:171:5:main	8	static
+../Core/Src/main.c:242:6:SystemClock_Config	88	static
+../Core/Src/main.c:296:6:HAL_TIM_PeriodElapsedCallback	16	static
+../Core/Src/main.c:314:6:Error_Handler	4	static,ignoring_inline_asm
