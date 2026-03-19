@@ -19,6 +19,5 @@ Thumbs.db
 *.tmp
 *.cache
 
-# Python cache
 __pycache__/
 *.pyc
