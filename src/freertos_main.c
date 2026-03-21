@@ -32,6 +32,14 @@ typedef struct {
     lv_obj_t * total_voltage_value;
     lv_obj_t * total_current_value;
     lv_obj_t * max_temp_value;
+    lv_obj_t * motor_fl_torque;
+    lv_obj_t * motor_fl_speed;
+    lv_obj_t * motor_fr_torque;
+    lv_obj_t * motor_fr_speed;
+    lv_obj_t * motor_rl_torque;
+    lv_obj_t * motor_rl_speed;
+    lv_obj_t * motor_rr_torque;
+    lv_obj_t * motor_rr_speed;
     lv_obj_t * key_target;
 } dashboard_ui_t;
 
@@ -463,6 +471,97 @@ void create_main_dashboard_screen(void)
 
     apply_vehicle_ui();
 
+    lv_obj_t * bottom_info = create_panel(screen, 0, 222, 480, 50, lv_color_hex(0x000000), LV_OPA_COVER);
+    lv_obj_set_style_border_width(bottom_info, 0, 0);
+
+    lv_obj_t * motor_fl_label = lv_label_create(bottom_info);
+    lv_label_set_text(motor_fl_label, "LF T:");
+    lv_obj_set_style_text_color(motor_fl_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(motor_fl_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(motor_fl_label, 8, 6);
+    g_dashboard.motor_fl_torque = lv_label_create(bottom_info);
+    lv_label_set_text(g_dashboard.motor_fl_torque, "120");
+    lv_obj_set_style_text_color(g_dashboard.motor_fl_torque, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g_dashboard.motor_fl_torque, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(g_dashboard.motor_fl_torque, 54, 6);
+    g_dashboard.motor_fl_speed = lv_label_create(bottom_info);
+    lv_label_set_text(g_dashboard.motor_fl_speed, "850");
+    lv_obj_set_style_text_color(g_dashboard.motor_fl_speed, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g_dashboard.motor_fl_speed, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(g_dashboard.motor_fl_speed, 54, 24);
+
+    lv_obj_t * motor_fl_speed_label = lv_label_create(bottom_info);
+    lv_label_set_text(motor_fl_speed_label, "LF N:");
+    lv_obj_set_style_text_color(motor_fl_speed_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(motor_fl_speed_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(motor_fl_speed_label, 8, 24);
+
+    lv_obj_t * motor_fr_label = lv_label_create(bottom_info);
+    lv_label_set_text(motor_fr_label, "RF T:");
+    lv_obj_set_style_text_color(motor_fr_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(motor_fr_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(motor_fr_label, 126, 6);
+    g_dashboard.motor_fr_torque = lv_label_create(bottom_info);
+    lv_label_set_text(g_dashboard.motor_fr_torque, "118");
+    lv_obj_set_style_text_color(g_dashboard.motor_fr_torque, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g_dashboard.motor_fr_torque, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(g_dashboard.motor_fr_torque, 172, 6);
+    g_dashboard.motor_fr_speed = lv_label_create(bottom_info);
+    lv_label_set_text(g_dashboard.motor_fr_speed, "840");
+    lv_obj_set_style_text_color(g_dashboard.motor_fr_speed, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g_dashboard.motor_fr_speed, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(g_dashboard.motor_fr_speed, 172, 24);
+
+    lv_obj_t * motor_fr_speed_label = lv_label_create(bottom_info);
+    lv_label_set_text(motor_fr_speed_label, "RF N:");
+    lv_obj_set_style_text_color(motor_fr_speed_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(motor_fr_speed_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(motor_fr_speed_label, 126, 24);
+
+    lv_obj_t * motor_rl_label = lv_label_create(bottom_info);
+    lv_label_set_text(motor_rl_label, "LR T:");
+    lv_obj_set_style_text_color(motor_rl_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(motor_rl_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(motor_rl_label, 244, 6);
+    g_dashboard.motor_rl_torque = lv_label_create(bottom_info);
+    lv_label_set_text(g_dashboard.motor_rl_torque, "116");
+    lv_obj_set_style_text_color(g_dashboard.motor_rl_torque, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g_dashboard.motor_rl_torque, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(g_dashboard.motor_rl_torque, 290, 6);
+    g_dashboard.motor_rl_speed = lv_label_create(bottom_info);
+    lv_label_set_text(g_dashboard.motor_rl_speed, "830");
+    lv_obj_set_style_text_color(g_dashboard.motor_rl_speed, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g_dashboard.motor_rl_speed, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(g_dashboard.motor_rl_speed, 290, 24);
+
+    lv_obj_t * motor_rl_speed_label = lv_label_create(bottom_info);
+    lv_label_set_text(motor_rl_speed_label, "LR N:");
+    lv_obj_set_style_text_color(motor_rl_speed_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(motor_rl_speed_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(motor_rl_speed_label, 244, 24);
+
+    lv_obj_t * motor_rr_label = lv_label_create(bottom_info);
+    lv_label_set_text(motor_rr_label, "RR T:");
+    lv_obj_set_style_text_color(motor_rr_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(motor_rr_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(motor_rr_label, 362, 6);
+    g_dashboard.motor_rr_torque = lv_label_create(bottom_info);
+    lv_label_set_text(g_dashboard.motor_rr_torque, "114");
+    lv_obj_set_style_text_color(g_dashboard.motor_rr_torque, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g_dashboard.motor_rr_torque, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(g_dashboard.motor_rr_torque, 408, 6);
+    g_dashboard.motor_rr_speed = lv_label_create(bottom_info);
+    lv_label_set_text(g_dashboard.motor_rr_speed, "820");
+    lv_obj_set_style_text_color(g_dashboard.motor_rr_speed, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g_dashboard.motor_rr_speed, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(g_dashboard.motor_rr_speed, 408, 24);
+
+    lv_obj_t * motor_rr_speed_label = lv_label_create(bottom_info);
+    lv_label_set_text(motor_rr_speed_label, "RR N:");
+    lv_obj_set_style_text_color(motor_rr_speed_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(motor_rr_speed_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(motor_rr_speed_label, 362, 24);
+
     lv_obj_t * separator_top = lv_obj_create(screen);
     lv_obj_remove_style_all(separator_top);
     lv_obj_set_pos(separator_top, 0, 35);
@@ -545,6 +644,23 @@ static void update_main_dashboard_demo(void)
     lv_label_set_text(g_dashboard.total_current_value, soc_buf);
     lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)g_max_temp);
     lv_label_set_text(g_dashboard.max_temp_value, soc_buf);
+
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(120 + speed / 2));
+    lv_label_set_text(g_dashboard.motor_fl_torque, soc_buf);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(800 + speed * 8));
+    lv_label_set_text(g_dashboard.motor_fl_speed, soc_buf);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(118 + speed / 2));
+    lv_label_set_text(g_dashboard.motor_fr_torque, soc_buf);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(790 + speed * 8));
+    lv_label_set_text(g_dashboard.motor_fr_speed, soc_buf);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(116 + speed / 2));
+    lv_label_set_text(g_dashboard.motor_rl_torque, soc_buf);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(780 + speed * 8));
+    lv_label_set_text(g_dashboard.motor_rl_speed, soc_buf);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(114 + speed / 2));
+    lv_label_set_text(g_dashboard.motor_rr_torque, soc_buf);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(770 + speed * 8));
+    lv_label_set_text(g_dashboard.motor_rr_speed, soc_buf);
 
     g_wheel_fl_alarm = speed > 120;
     g_wheel_fr_alarm = speed > 80;
