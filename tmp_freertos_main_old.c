@@ -29,10 +29,6 @@ typedef struct {
     lv_obj_t * wheel_fr;
     lv_obj_t * wheel_rl;
     lv_obj_t * wheel_rr;
-    lv_obj_t * lightning_fl;
-    lv_obj_t * lightning_fr;
-    lv_obj_t * lightning_rl;
-    lv_obj_t * lightning_rr;
     lv_obj_t * total_voltage_value;
     lv_obj_t * total_current_value;
     lv_obj_t * max_temp_value;
@@ -57,62 +53,26 @@ typedef enum {
 
 static drive_mode_t g_drive_mode = DRIVE_MODE_S;
 static int32_t g_soc_value = 72;
-static int32_t g_tire_temp_fl = 35;
-static int32_t g_tire_temp_fr = 48;
-static int32_t g_tire_temp_rl = 58;
-static int32_t g_tire_temp_rr = 66;
-static bool g_lightning_fl = false;
-static bool g_lightning_fr = true;
-static bool g_lightning_rl = false;
-static bool g_lightning_rr = true;
+static bool g_wheel_fl_alarm = false;
+static bool g_wheel_fr_alarm = true;
+static bool g_wheel_rl_alarm = false;
+static bool g_wheel_rr_alarm = true;
 static int32_t g_total_voltage = 72;
 static int32_t g_total_current = 15;
 static int32_t g_max_temp = 46;
 
-static lv_color_t temp_to_color(int32_t temp)
+static void apply_wheel_ui(lv_obj_t * wheel_obj, bool alarm)
 {
-    if(temp < 30) temp = 30;
-    if(temp > 80) temp = 80;
-
-    uint8_t mix = (uint8_t)(((temp - 30) * 255) / 50);
-    return lv_color_mix(lv_palette_main(LV_PALETTE_RED), lv_palette_main(LV_PALETTE_GREEN), mix);
+    if(wheel_obj == NULL) return;
+    lv_obj_set_style_bg_color(wheel_obj, alarm ? lv_palette_main(LV_PALETTE_RED) : lv_color_hex(0xFFFFFF), 0);
 }
 
 static void apply_vehicle_ui(void)
 {
-    lv_color_t fl = temp_to_color(g_tire_temp_fl);
-    lv_color_t fr = temp_to_color(g_tire_temp_fr);
-    lv_color_t rl = temp_to_color(g_tire_temp_rl);
-    lv_color_t rr = temp_to_color(g_tire_temp_rr);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fl, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_fl, fl, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_fl, fl, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_fl, LV_GRAD_DIR_VER, 0);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fr, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_fr, fr, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_fr, fr, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_fr, LV_GRAD_DIR_VER, 0);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rl, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_rl, rl, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_rl, rl, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_rl, LV_GRAD_DIR_VER, 0);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rr, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_rr, rr, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_rr, rr, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_rr, LV_GRAD_DIR_VER, 0);
-
-    if(g_lightning_fl) lv_obj_clear_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
-    if(g_lightning_fr) lv_obj_clear_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
-    if(g_lightning_rl) lv_obj_clear_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
-    if(g_lightning_rr) lv_obj_clear_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
+    apply_wheel_ui(g_dashboard.wheel_fl, g_wheel_fl_alarm);
+    apply_wheel_ui(g_dashboard.wheel_fr, g_wheel_fr_alarm);
+    apply_wheel_ui(g_dashboard.wheel_rl, g_wheel_rl_alarm);
+    apply_wheel_ui(g_dashboard.wheel_rr, g_wheel_rr_alarm);
 }
 
 static void apply_drive_mode_ui(void)
@@ -358,8 +318,8 @@ void create_main_dashboard_screen(void)
 
     g_dashboard.speed_value = create_value(speed_box, "68", lv_color_hex(0xFFFFFF), 28);
     lv_obj_set_style_text_font(g_dashboard.speed_value, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_transform_zoom(g_dashboard.speed_value, 480, 0);
-    lv_obj_align(g_dashboard.speed_value, LV_ALIGN_CENTER, -18, -26);
+    lv_obj_set_style_transform_zoom(g_dashboard.speed_value, 420, 0);
+    lv_obj_align(g_dashboard.speed_value, LV_ALIGN_CENTER, -18, -22);
 
     g_dashboard.speed_unit = lv_label_create(speed_box);
     lv_label_set_text(g_dashboard.speed_unit, "km/h");
@@ -376,61 +336,138 @@ void create_main_dashboard_screen(void)
     lv_obj_align(g_dashboard.mode_value, LV_ALIGN_TOP_MID, 0, 6);
     apply_drive_mode_ui();
 
+    lv_obj_t * front_wing = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(front_wing);
+    lv_obj_set_pos(front_wing, 24, 52);
+    lv_obj_set_size(front_wing, 62, 5);
+    lv_obj_set_style_border_width(front_wing, 1, 0);
+    lv_obj_set_style_border_color(front_wing, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(front_wing, LV_OPA_TRANSP, 0);
+
+    lv_obj_t * nose = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(nose);
+    lv_obj_set_pos(nose, 49, 57);
+    lv_obj_set_size(nose, 12, 26);
+    lv_obj_set_style_border_width(nose, 1, 0);
+    lv_obj_set_style_border_color(nose, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(nose, LV_OPA_TRANSP, 0);
+
+    lv_obj_t * front_arm_l = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(front_arm_l);
+    lv_obj_set_pos(front_arm_l, 31, 72);
+    lv_obj_set_size(front_arm_l, 18, 1);
+    lv_obj_set_style_bg_color(front_arm_l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(front_arm_l, LV_OPA_COVER, 0);
+
+    lv_obj_t * front_arm_r = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(front_arm_r);
+    lv_obj_set_pos(front_arm_r, 61, 72);
+    lv_obj_set_size(front_arm_r, 18, 1);
+    lv_obj_set_style_bg_color(front_arm_r, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(front_arm_r, LV_OPA_COVER, 0);
+
+    lv_obj_t * chassis = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(chassis);
+    lv_obj_set_pos(chassis, 40, 82);
+    lv_obj_set_size(chassis, 30, 62);
+    lv_obj_set_style_border_width(chassis, 1, 0);
+    lv_obj_set_style_border_color(chassis, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(chassis, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(chassis, 6, 0);
+
+    lv_obj_t * sidepod_l = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(sidepod_l);
+    lv_obj_set_pos(sidepod_l, 28, 98);
+    lv_obj_set_size(sidepod_l, 12, 26);
+    lv_obj_set_style_border_width(sidepod_l, 1, 0);
+    lv_obj_set_style_border_color(sidepod_l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(sidepod_l, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(sidepod_l, 3, 0);
+
+    lv_obj_t * sidepod_r = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(sidepod_r);
+    lv_obj_set_pos(sidepod_r, 70, 98);
+    lv_obj_set_size(sidepod_r, 12, 26);
+    lv_obj_set_style_border_width(sidepod_r, 1, 0);
+    lv_obj_set_style_border_color(sidepod_r, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(sidepod_r, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(sidepod_r, 3, 0);
+
+    lv_obj_t * cockpit = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(cockpit);
+    lv_obj_set_pos(cockpit, 44, 92);
+    lv_obj_set_size(cockpit, 22, 20);
+    lv_obj_set_style_border_width(cockpit, 1, 0);
+    lv_obj_set_style_border_color(cockpit, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(cockpit, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(cockpit, 4, 0);
+
+    lv_obj_t * engine_cover = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(engine_cover);
+    lv_obj_set_pos(engine_cover, 44, 122);
+    lv_obj_set_size(engine_cover, 22, 28);
+    lv_obj_set_style_border_width(engine_cover, 1, 0);
+    lv_obj_set_style_border_color(engine_cover, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(engine_cover, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(engine_cover, 3, 0);
+
+    lv_obj_t * rear_body = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(rear_body);
+    lv_obj_set_pos(rear_body, 36, 150);
+    lv_obj_set_size(rear_body, 38, 12);
+    lv_obj_set_style_border_width(rear_body, 1, 0);
+    lv_obj_set_style_border_color(rear_body, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(rear_body, LV_OPA_TRANSP, 0);
+
+    lv_obj_t * rear_wing = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(rear_wing);
+    lv_obj_set_pos(rear_wing, 26, 162);
+    lv_obj_set_size(rear_wing, 58, 5);
+    lv_obj_set_style_border_width(rear_wing, 1, 0);
+    lv_obj_set_style_border_color(rear_wing, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(rear_wing, LV_OPA_TRANSP, 0);
+
+    lv_obj_t * rear_arm_l = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(rear_arm_l);
+    lv_obj_set_pos(rear_arm_l, 31, 144);
+    lv_obj_set_size(rear_arm_l, 14, 1);
+    lv_obj_set_style_bg_color(rear_arm_l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(rear_arm_l, LV_OPA_COVER, 0);
+
+    lv_obj_t * rear_arm_r = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(rear_arm_r);
+    lv_obj_set_pos(rear_arm_r, 65, 144);
+    lv_obj_set_size(rear_arm_r, 14, 1);
+    lv_obj_set_style_bg_color(rear_arm_r, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(rear_arm_r, LV_OPA_COVER, 0);
+
     g_dashboard.wheel_fl = lv_obj_create(vehicle_box);
     lv_obj_remove_style_all(g_dashboard.wheel_fl);
-    lv_obj_set_pos(g_dashboard.wheel_fl, 18, 84);
-    lv_obj_set_size(g_dashboard.wheel_fl, 16, 30);
+    lv_obj_set_pos(g_dashboard.wheel_fl, 16, 76);
+    lv_obj_set_size(g_dashboard.wheel_fl, 12, 26);
     lv_obj_set_style_radius(g_dashboard.wheel_fl, 3, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fl, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_dashboard.wheel_fl, 1, 0);
-    lv_obj_set_style_border_color(g_dashboard.wheel_fl, lv_color_hex(0xFFFFFF), 0);
-
-    g_dashboard.lightning_fl = lv_label_create(vehicle_box);
-    lv_label_set_text(g_dashboard.lightning_fl, LV_SYMBOL_CHARGE);
-    lv_obj_set_style_text_color(g_dashboard.lightning_fl, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_pos(g_dashboard.lightning_fl, 38, 92);
+    lv_obj_set_style_bg_opa(g_dashboard.wheel_fl, LV_OPA_COVER, 0);
 
     g_dashboard.wheel_fr = lv_obj_create(vehicle_box);
     lv_obj_remove_style_all(g_dashboard.wheel_fr);
-    lv_obj_set_pos(g_dashboard.wheel_fr, 80, 84);
-    lv_obj_set_size(g_dashboard.wheel_fr, 16, 30);
+    lv_obj_set_pos(g_dashboard.wheel_fr, 82, 76);
+    lv_obj_set_size(g_dashboard.wheel_fr, 12, 26);
     lv_obj_set_style_radius(g_dashboard.wheel_fr, 3, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fr, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_dashboard.wheel_fr, 1, 0);
-    lv_obj_set_style_border_color(g_dashboard.wheel_fr, lv_color_hex(0xFFFFFF), 0);
-
-    g_dashboard.lightning_fr = lv_label_create(vehicle_box);
-    lv_label_set_text(g_dashboard.lightning_fr, LV_SYMBOL_CHARGE);
-    lv_obj_set_style_text_color(g_dashboard.lightning_fr, lv_color_hex(0xFFD400), 0);
-    lv_obj_align_to(g_dashboard.lightning_fr, g_dashboard.wheel_fr, LV_ALIGN_OUT_LEFT_MID, 0, 0);
+    lv_obj_set_style_bg_opa(g_dashboard.wheel_fr, LV_OPA_COVER, 0);
 
     g_dashboard.wheel_rl = lv_obj_create(vehicle_box);
     lv_obj_remove_style_all(g_dashboard.wheel_rl);
-    lv_obj_set_pos(g_dashboard.wheel_rl, 18, 120);
-    lv_obj_set_size(g_dashboard.wheel_rl, 16, 30);
+    lv_obj_set_pos(g_dashboard.wheel_rl, 16, 140);
+    lv_obj_set_size(g_dashboard.wheel_rl, 12, 26);
     lv_obj_set_style_radius(g_dashboard.wheel_rl, 3, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rl, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_dashboard.wheel_rl, 1, 0);
-    lv_obj_set_style_border_color(g_dashboard.wheel_rl, lv_color_hex(0xFFFFFF), 0);
-
-    g_dashboard.lightning_rl = lv_label_create(vehicle_box);
-    lv_label_set_text(g_dashboard.lightning_rl, LV_SYMBOL_CHARGE);
-    lv_obj_set_style_text_color(g_dashboard.lightning_rl, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_pos(g_dashboard.lightning_rl, 38, 128);
+    lv_obj_set_style_bg_opa(g_dashboard.wheel_rl, LV_OPA_COVER, 0);
 
     g_dashboard.wheel_rr = lv_obj_create(vehicle_box);
     lv_obj_remove_style_all(g_dashboard.wheel_rr);
-    lv_obj_set_pos(g_dashboard.wheel_rr, 80, 120);
-    lv_obj_set_size(g_dashboard.wheel_rr, 16, 30);
+    lv_obj_set_pos(g_dashboard.wheel_rr, 82, 140);
+    lv_obj_set_size(g_dashboard.wheel_rr, 12, 26);
     lv_obj_set_style_radius(g_dashboard.wheel_rr, 3, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rr, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_dashboard.wheel_rr, 1, 0);
-    lv_obj_set_style_border_color(g_dashboard.wheel_rr, lv_color_hex(0xFFFFFF), 0);
-
-    g_dashboard.lightning_rr = lv_label_create(vehicle_box);
-    lv_label_set_text(g_dashboard.lightning_rr, LV_SYMBOL_CHARGE);
-    lv_obj_set_style_text_color(g_dashboard.lightning_rr, lv_color_hex(0xFFD400), 0);
-    lv_obj_align_to(g_dashboard.lightning_rr, g_dashboard.wheel_rr, LV_ALIGN_OUT_LEFT_MID, 0, 0);
+    lv_obj_set_style_bg_opa(g_dashboard.wheel_rr, LV_OPA_COVER, 0);
 
     apply_vehicle_ui();
 
@@ -560,7 +597,6 @@ void create_main_dashboard_screen(void)
 
     lv_scr_load(screen);
     lv_group_focus_obj(g_dashboard.key_target);
-    lv_refr_now(NULL);
 }
 
 static void update_main_dashboard_demo(void)
@@ -626,15 +662,10 @@ static void update_main_dashboard_demo(void)
     lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(770 + speed * 8));
     lv_label_set_text(g_dashboard.motor_rr_speed, soc_buf);
 
-    g_tire_temp_fl = 30 + speed / 2;
-    g_tire_temp_fr = 36 + speed / 2;
-    g_tire_temp_rl = 42 + speed / 2;
-    g_tire_temp_rr = 48 + speed / 2;
-
-    g_lightning_fl = ((speed / 10) % 2) != 0;
-    g_lightning_fr = ((speed / 12) % 2) != 0;
-    g_lightning_rl = ((speed / 14) % 2) != 0;
-    g_lightning_rr = ((speed / 16) % 2) != 0;
+    g_wheel_fl_alarm = speed > 120;
+    g_wheel_fr_alarm = speed > 80;
+    g_wheel_rl_alarm = speed > 140;
+    g_wheel_rr_alarm = speed > 100;
     apply_vehicle_ui();
 }
 
