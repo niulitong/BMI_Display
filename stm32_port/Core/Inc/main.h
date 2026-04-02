@@ -63,6 +63,8 @@ void Error_Handler(void);
 #define LED_GREEN_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
+#define SSD1963_RST_Pin GPIO_PIN_3
+#define SSD1963_RST_GPIO_Port GPIOG
 
 /* USER CODE END Private defines */
 

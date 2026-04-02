@@ -1,8 +1,9 @@
-../Core/Src/can.c:37:6:MX_CAN1_Init	2
-../Core/Src/can.c:69:6:MX_CAN2_Init	2
-../Core/Src/can.c:103:6:HAL_CAN_MspInit	5
-../Core/Src/can.c:185:6:HAL_CAN_MspDeInit	5
-../Core/Src/can.c:246:6:CAN1_Filter_Config	1
-../Core/Src/can.c:266:6:User_CAN_Send	1
-../Core/Src/can.c:281:6:User_CAN_Send_sq	1
-../Core/Src/can.c:294:6:HAL_CAN1_RxFifo0MsgPendingCallback	2
+../Core/Src/can.c:50:6:MX_CAN1_Init	2
+../Core/Src/can.c:82:6:MX_CAN2_Init	2
+../Core/Src/can.c:116:6:HAL_CAN_MspInit	5
+../Core/Src/can.c:198:6:HAL_CAN_MspDeInit	5
+../Core/Src/can.c:259:6:CAN1_Filter_Config	1
+../Core/Src/can.c:279:6:User_CAN_Send	1
+../Core/Src/can.c:294:6:User_CAN_Send_sq	1
+../Core/Src/can.c:304:6:CAN1_SendHeartbeat	2
+../Core/Src/can.c:327:6:HAL_CAN_RxFifo0MsgPendingCallback	7

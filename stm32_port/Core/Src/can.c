@@ -20,14 +20,27 @@
 /* Includes ------------------------------------------------------------------*/
 #include "can.h"
 
+#include "dashboard_ui.h"
+
 /* USER CODE BEGIN 0 */
 CAN_TxHeaderTypeDef TxHeader;
 uint8_t CAN_TxData[] = { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 };
 uint32_t CAN1_TxMail;
 uint32_t CAN1_ID = 0x102;
+static uint8_t g_can_heartbeat_counter;
 CAN_RxHeaderTypeDef RxHeader;
 uint8_t CAN_RxData[8] = { 0 };
 uint16_t CAN1_RX_MSG_ID[4] = {0x401, 0x501, 0x502, 0x50};
+static dashboard_data_t g_can_dashboard_data = {
+  .speed = 0,
+  .soc = 72,
+  .mode_index = 0,
+  .torque = {120, 118, 116, 114},
+  .rpm = {800, 790, 780, 770},
+  .sum_voltage = 72,
+  .sum_current = 15,
+  .max_temperature = 46,
+};
 /* USER CODE END 0 */
 
 CAN_HandleTypeDef hcan1;
@@ -115,24 +128,24 @@ void HAL_CAN_MspInit(CAN_HandleTypeDef* canHandle)
       __HAL_RCC_CAN1_CLK_ENABLE();
     }
 
-    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
     /**CAN1 GPIO Configuration
-    PA11     ------> CAN1_RX
-    PA12     ------> CAN1_TX
+    PB8     ------> CAN1_RX
+    PB9     ------> CAN1_TX
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_11;
+    GPIO_InitStruct.Pin = GPIO_PIN_8;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF9_CAN1;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = GPIO_PIN_12;
+    GPIO_InitStruct.Pin = GPIO_PIN_9;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF9_CAN1;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
     /* CAN1 interrupt Init */
     HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 5, 0);
@@ -197,10 +210,10 @@ void HAL_CAN_MspDeInit(CAN_HandleTypeDef* canHandle)
     }
 
     /**CAN1 GPIO Configuration
-    PA11     ------> CAN1_RX
-    PA12     ------> CAN1_TX
+    PB8     ------> CAN1_RX
+    PB9     ------> CAN1_TX
     */
-    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_11|GPIO_PIN_12);
+    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_8|GPIO_PIN_9);
 
     /* CAN1 interrupt Deinit */
     HAL_NVIC_DisableIRQ(CAN1_RX0_IRQn);
@@ -288,10 +301,30 @@ void User_CAN_Send_sq(uint32_t CAN_ID_NEW,uint8_t* CAN_TxData_NEW)
 	HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData_NEW, &CAN1_TxMail);
 }
 
+void CAN1_SendHeartbeat(void)
+{
+  uint8_t heartbeat_data[8];
+
+  if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0U) {
+    return;
+  }
+
+  heartbeat_data[0] = 0xA5;
+  heartbeat_data[1] = 0x5A;
+  heartbeat_data[2] = g_can_heartbeat_counter++;
+  heartbeat_data[3] = 0xF4;
+  heartbeat_data[4] = 0x07;
+  heartbeat_data[5] = 0x40;
+  heartbeat_data[6] = 0x00;
+  heartbeat_data[7] = 0x01;
+
+  User_CAN_Send_sq(CAN1_ID, heartbeat_data);
+}
+
 /*
  * @func: CAN1报文接收中断[FIFO0]
  */
-void HAL_CAN1_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
 	if(HAL_CAN_GetRxMessage(hcan, CAN_FILTER_FIFO0, &RxHeader, CAN_RxData)!= HAL_OK)
 	{
@@ -303,16 +336,31 @@ void HAL_CAN1_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	//根据不同的ID，获得不同的信息，具体请看车队的CAN协议
 	if(RxHeader.StdId==0x401)
 	{
-
+    g_can_dashboard_data.soc = (int32_t)CAN_RxData[6];
+    g_can_dashboard_data.sum_voltage = (int32_t)CAN_RxData[0] + ((int32_t)CAN_RxData[1] * 256);
+    g_can_dashboard_data.sum_current = (int32_t)CAN_RxData[4] + ((int32_t)CAN_RxData[5] * 256);
+    g_can_dashboard_data.max_temperature = (int32_t)CAN_RxData[7];
 	}
 	if(RxHeader.StdId==0x501)//新增电机扭矩与常态化驾驶模式
 	{
+    uint32_t index;
 
+    g_can_dashboard_data.speed = (int32_t)CAN_RxData[0];
+    for(index = 0; index < 4U; index++) {
+      g_can_dashboard_data.torque[index] = (int32_t)CAN_RxData[index + 3U];
+    }
+    g_can_dashboard_data.mode_index = (int32_t)CAN_RxData[7];
 	}
 	if(RxHeader.StdId==0x502)
 	{
+    uint32_t index;
 
+    for(index = 0; index < 4U; index++) {
+      g_can_dashboard_data.rpm[index] = (int32_t)CAN_RxData[index];
+    }
 	}
+
+  Dashboard_UI_SubmitData(&g_can_dashboard_data);
 //	if(RxHeader.StdId==0x50)//IMU 回发与数据处理
 //	{
 ////		User_CAN_Send_sq(0x03,CAN_RxData);

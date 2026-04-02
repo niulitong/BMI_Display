@@ -18,10 +18,11 @@
 #include <SDL.h>
 
 typedef struct {
-    lv_obj_t * speed_value;
     lv_obj_t * speed_unit;
     lv_obj_t * speed_bar_mask;
     lv_obj_t * speed_bar_gradient;
+    lv_obj_t * speed_digit_container;
+    lv_obj_t * speed_segments[2][7];
     lv_obj_t * mode_value;
     lv_obj_t * soc_value;
     lv_obj_t * battery_fill;
@@ -56,18 +57,35 @@ typedef enum {
 } drive_mode_t;
 
 static drive_mode_t g_drive_mode = DRIVE_MODE_S;
-static int32_t g_soc_value = 72;
-static int32_t g_tire_temp_fl = 35;
-static int32_t g_tire_temp_fr = 48;
-static int32_t g_tire_temp_rl = 58;
-static int32_t g_tire_temp_rr = 66;
-static bool g_lightning_fl = false;
-static bool g_lightning_fr = true;
-static bool g_lightning_rl = false;
-static bool g_lightning_rr = true;
-static int32_t g_total_voltage = 72;
-static int32_t g_total_current = 15;
-static int32_t g_max_temp = 46;
+static int speed = 0;
+static int SOC = 72;
+static int Mode_Index = 0;
+static int torque_M[4] = {120, 118, 116, 114};
+static int RPM[4] = {800, 790, 780, 770};
+static int Sum_Voltage = 72;
+static int Top_Temperature = 46;
+static int Sum_I = 15;
+static int Tire_Temp_FL = 35;
+static int Tire_Temp_FR = 48;
+static int Tire_Temp_RL = 58;
+static int Tire_Temp_RR = 66;
+static bool Motor_FL_Online = false;
+static bool Motor_FR_Online = true;
+static bool Motor_RL_Online = false;
+static bool Motor_RR_Online = true;
+
+static const uint8_t g_speed_digit_map[10][7] = {
+    {1, 1, 1, 1, 1, 1, 0},
+    {0, 1, 1, 0, 0, 0, 0},
+    {1, 1, 0, 1, 1, 0, 1},
+    {1, 1, 1, 1, 0, 0, 1},
+    {0, 1, 1, 0, 0, 1, 1},
+    {1, 0, 1, 1, 0, 1, 1},
+    {1, 0, 1, 1, 1, 1, 1},
+    {1, 1, 1, 0, 0, 0, 0},
+    {1, 1, 1, 1, 1, 1, 1},
+    {1, 1, 1, 1, 0, 1, 1},
+};
 
 static lv_color_t temp_to_color(int32_t temp)
 {
@@ -80,10 +98,10 @@ static lv_color_t temp_to_color(int32_t temp)
 
 static void apply_vehicle_ui(void)
 {
-    lv_color_t fl = temp_to_color(g_tire_temp_fl);
-    lv_color_t fr = temp_to_color(g_tire_temp_fr);
-    lv_color_t rl = temp_to_color(g_tire_temp_rl);
-    lv_color_t rr = temp_to_color(g_tire_temp_rr);
+    lv_color_t fl = temp_to_color(Tire_Temp_FL);
+    lv_color_t fr = temp_to_color(Tire_Temp_FR);
+    lv_color_t rl = temp_to_color(Tire_Temp_RL);
+    lv_color_t rr = temp_to_color(Tire_Temp_RR);
 
     lv_obj_set_style_bg_opa(g_dashboard.wheel_fl, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(g_dashboard.wheel_fl, fl, 0);
@@ -105,13 +123,13 @@ static void apply_vehicle_ui(void)
     lv_obj_set_style_bg_grad_color(g_dashboard.wheel_rr, rr, 0);
     lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_rr, LV_GRAD_DIR_VER, 0);
 
-    if(g_lightning_fl) lv_obj_clear_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
+    if(Motor_FL_Online) lv_obj_clear_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
-    if(g_lightning_fr) lv_obj_clear_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
+    if(Motor_FR_Online) lv_obj_clear_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
-    if(g_lightning_rl) lv_obj_clear_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
+    if(Motor_RL_Online) lv_obj_clear_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
-    if(g_lightning_rr) lv_obj_clear_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
+    if(Motor_RR_Online) lv_obj_clear_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -132,6 +150,22 @@ static void apply_drive_mode_ui(void)
         default:
             lv_label_set_text(g_dashboard.mode_value, "C");
             lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_BLUE), 0);
+            break;
+    }
+}
+
+static void sync_mode_from_index(void)
+{
+    switch(Mode_Index) {
+        case 0:
+            g_drive_mode = DRIVE_MODE_C;
+            break;
+        case 1:
+            g_drive_mode = DRIVE_MODE_E;
+            break;
+        case 2:
+        default:
+            g_drive_mode = DRIVE_MODE_S;
             break;
     }
 }
@@ -248,6 +282,83 @@ static lv_obj_t * create_value(lv_obj_t * parent, const char * text, lv_color_t 
     return label;
 }
 
+static lv_obj_t * create_segment(lv_obj_t * parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h)
+{
+    lv_obj_t * segment = lv_obj_create(parent);
+    lv_obj_remove_style_all(segment);
+    lv_obj_set_pos(segment, x, y);
+    lv_obj_set_size(segment, w, h);
+    lv_obj_set_style_radius(segment, 3, 0);
+    lv_obj_set_style_bg_color(segment, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_set_style_bg_opa(segment, LV_OPA_40, 0);
+    return segment;
+}
+
+static void set_speed_digit_segment_state(lv_obj_t * segment, bool enabled)
+{
+    lv_obj_set_style_bg_color(segment, enabled ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x1E1E1E), 0);
+    lv_obj_set_style_bg_opa(segment, enabled ? LV_OPA_COVER : LV_OPA_40, 0);
+}
+
+static void create_speed_digits(lv_obj_t * parent)
+{
+    const lv_coord_t digit_width = 50;
+    const lv_coord_t digit_height = 82;
+    const lv_coord_t segment_thickness = 8;
+    const lv_coord_t digit_gap = 12;
+    const lv_coord_t mid_y = (digit_height - segment_thickness) / 2;
+    const lv_coord_t bottom_y = digit_height - segment_thickness;
+
+    g_dashboard.speed_digit_container = lv_obj_create(parent);
+    lv_obj_remove_style_all(g_dashboard.speed_digit_container);
+    lv_obj_set_size(g_dashboard.speed_digit_container,
+                    (digit_width * 2) + digit_gap,
+                    digit_height);
+    lv_obj_align(g_dashboard.speed_digit_container, LV_ALIGN_CENTER, -8, -16);
+
+    for(uint32_t digit_index = 0; digit_index < 2U; digit_index++) {
+        lv_coord_t base_x = (lv_coord_t)digit_index * (digit_width + digit_gap);
+        lv_obj_t ** segments = g_dashboard.speed_segments[digit_index];
+
+        segments[0] = create_segment(g_dashboard.speed_digit_container, base_x + segment_thickness, 0,
+                                     digit_width - (segment_thickness * 2), segment_thickness);
+        segments[1] = create_segment(g_dashboard.speed_digit_container, base_x + digit_width - segment_thickness,
+                                     segment_thickness, segment_thickness, mid_y - segment_thickness / 2);
+        segments[2] = create_segment(g_dashboard.speed_digit_container, base_x + digit_width - segment_thickness,
+                                     mid_y + segment_thickness / 2, segment_thickness,
+                                     mid_y - segment_thickness / 2);
+        segments[3] = create_segment(g_dashboard.speed_digit_container, base_x + segment_thickness, bottom_y,
+                                     digit_width - (segment_thickness * 2), segment_thickness);
+        segments[4] = create_segment(g_dashboard.speed_digit_container, base_x, mid_y + segment_thickness / 2,
+                                     segment_thickness, mid_y - segment_thickness / 2);
+        segments[5] = create_segment(g_dashboard.speed_digit_container, base_x, segment_thickness,
+                                     segment_thickness, mid_y - segment_thickness / 2);
+        segments[6] = create_segment(g_dashboard.speed_digit_container, base_x + segment_thickness, mid_y,
+                                     digit_width - (segment_thickness * 2), segment_thickness);
+    }
+}
+
+static void set_speed_digits(int32_t speed_value)
+{
+    uint8_t digits[2];
+
+    if(speed_value < 0) speed_value = 0;
+    if(speed_value > 99) speed_value = 99;
+
+    digits[0] = (uint8_t)((speed_value / 10) % 10);
+    digits[1] = (uint8_t)(speed_value % 10);
+
+    for(uint32_t digit_index = 0; digit_index < 2U; digit_index++) {
+        bool hide_digit = (digit_index == 0U) && (digits[digit_index] == 0U);
+
+        for(uint32_t segment_index = 0; segment_index < 7U; segment_index++) {
+            set_speed_digit_segment_state(
+                g_dashboard.speed_segments[digit_index][segment_index],
+                hide_digit ? false : (g_speed_digit_map[digits[digit_index]][segment_index] != 0U));
+        }
+    }
+}
+
 void create_main_dashboard_screen(void)
 {
     lv_obj_t * screen = lv_obj_create(NULL);
@@ -356,17 +467,14 @@ void create_main_dashboard_screen(void)
     lv_obj_set_style_border_width(speed_box, 0, 0);
     lv_obj_set_style_pad_all(speed_box, 0, 0);
 
-    g_dashboard.speed_value = create_value(speed_box, "68", lv_color_hex(0xFFFFFF), 28);
-    lv_obj_set_style_text_font(g_dashboard.speed_value, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_transform_zoom(g_dashboard.speed_value, 480, 0);
-    lv_obj_align(g_dashboard.speed_value, LV_ALIGN_CENTER, -18, -26);
+    create_speed_digits(speed_box);
 
     g_dashboard.speed_unit = lv_label_create(speed_box);
     lv_label_set_text(g_dashboard.speed_unit, "km/h");
     lv_obj_set_style_text_color(g_dashboard.speed_unit, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(g_dashboard.speed_unit, LV_OPA_60, 0);
     lv_obj_set_style_text_font(g_dashboard.speed_unit, &lv_font_montserrat_14, 0);
-    lv_obj_align(g_dashboard.speed_unit, LV_ALIGN_CENTER, -12, 40);
+    lv_obj_align(g_dashboard.speed_unit, LV_ALIGN_CENTER, -8, 44);
 
     lv_obj_t * vehicle_box = create_panel(middle_panel, 0, 0, 110, 176, lv_color_hex(0x000000), LV_OPA_COVER);
     lv_obj_set_style_border_width(vehicle_box, 0, 0);
@@ -565,7 +673,6 @@ void create_main_dashboard_screen(void)
 
 static void update_main_dashboard_demo(void)
 {
-    static int32_t speed = 0;
     static int32_t delta = 2;
     static char speed_buf[8];
     static int32_t soc_delta = -1;
@@ -581,60 +688,76 @@ static void update_main_dashboard_demo(void)
         delta = 2;
     }
 
-    lv_snprintf(speed_buf, sizeof(speed_buf), "%ld", (long)speed);
-    lv_label_set_text(g_dashboard.speed_value, speed_buf);
-    lv_obj_set_width(g_dashboard.speed_bar_mask, speed == 0 ? 1 : (speed * 480 / 100));
+    int display_speed = speed;
+    if(display_speed < 0) display_speed = 0;
+    if(display_speed > 99) display_speed = 99;
 
-    g_soc_value += soc_delta;
-    if(g_soc_value >= 100) {
-        g_soc_value = 100;
+    set_speed_digits(display_speed);
+    lv_obj_set_width(g_dashboard.speed_bar_mask, display_speed == 0 ? 1 : (display_speed * 480 / 100));
+
+    SOC += soc_delta;
+    if(SOC >= 100) {
+        SOC = 100;
         soc_delta = -1;
     }
-    else if(g_soc_value <= 0) {
-        g_soc_value = 0;
+    else if(SOC <= 0) {
+        SOC = 0;
         soc_delta = 1;
     }
 
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)g_soc_value);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)SOC);
     lv_label_set_text(g_dashboard.soc_value, soc_buf);
-    lv_obj_set_width(g_dashboard.battery_fill, g_soc_value == 0 ? 1 : (g_soc_value * 38 / 100));
+    lv_obj_set_width(g_dashboard.battery_fill, SOC == 0 ? 1 : (SOC * 38 / 100));
 
-    g_total_voltage = 72 + speed / 10;
-    g_total_current = 15 + speed / 8;
-    g_max_temp = 46 + speed / 20;
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)g_total_voltage);
+    Sum_Voltage = 72 + speed / 10;
+    Sum_I = 15 + speed / 8;
+    Top_Temperature = 46 + speed / 20;
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)Sum_Voltage);
     lv_label_set_text(g_dashboard.total_voltage_value, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)g_total_current);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)Sum_I);
     lv_label_set_text(g_dashboard.total_current_value, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)g_max_temp);
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)Top_Temperature);
     lv_label_set_text(g_dashboard.max_temp_value, soc_buf);
 
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(120 + speed / 2));
+    Mode_Index = (speed / 34) % 3;
+    sync_mode_from_index();
+    apply_drive_mode_ui();
+
+    torque_M[0] = 120 + speed / 2;
+    torque_M[1] = 118 + speed / 2;
+    torque_M[2] = 116 + speed / 2;
+    torque_M[3] = 114 + speed / 2;
+    RPM[0] = 800 + speed * 8;
+    RPM[1] = 790 + speed * 8;
+    RPM[2] = 780 + speed * 8;
+    RPM[3] = 770 + speed * 8;
+
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)torque_M[0]);
     lv_label_set_text(g_dashboard.motor_fl_torque, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(800 + speed * 8));
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)RPM[0]);
     lv_label_set_text(g_dashboard.motor_fl_speed, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(118 + speed / 2));
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)torque_M[1]);
     lv_label_set_text(g_dashboard.motor_fr_torque, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(790 + speed * 8));
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)RPM[1]);
     lv_label_set_text(g_dashboard.motor_fr_speed, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(116 + speed / 2));
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)torque_M[2]);
     lv_label_set_text(g_dashboard.motor_rl_torque, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(780 + speed * 8));
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)RPM[2]);
     lv_label_set_text(g_dashboard.motor_rl_speed, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(114 + speed / 2));
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)torque_M[3]);
     lv_label_set_text(g_dashboard.motor_rr_torque, soc_buf);
-    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)(770 + speed * 8));
+    lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)RPM[3]);
     lv_label_set_text(g_dashboard.motor_rr_speed, soc_buf);
 
-    g_tire_temp_fl = 30 + speed / 2;
-    g_tire_temp_fr = 36 + speed / 2;
-    g_tire_temp_rl = 42 + speed / 2;
-    g_tire_temp_rr = 48 + speed / 2;
+    Tire_Temp_FL = 30 + speed / 2;
+    Tire_Temp_FR = 36 + speed / 2;
+    Tire_Temp_RL = 42 + speed / 2;
+    Tire_Temp_RR = 48 + speed / 2;
 
-    g_lightning_fl = ((speed / 10) % 2) != 0;
-    g_lightning_fr = ((speed / 12) % 2) != 0;
-    g_lightning_rl = ((speed / 14) % 2) != 0;
-    g_lightning_rr = ((speed / 16) % 2) != 0;
+    Motor_FL_Online = ((speed / 10) % 2) != 0;
+    Motor_FR_Online = ((speed / 12) % 2) != 0;
+    Motor_RL_Online = ((speed / 14) % 2) != 0;
+    Motor_RR_Online = ((speed / 16) % 2) != 0;
     apply_vehicle_ui();
 }
 

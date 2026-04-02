@@ -26,8 +26,12 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "cmsis_os2.h"
+#include "can.h"
+#include "dashboard_ui.h"
+#include "../lvgl/lvgl.h"
 
 extern void LCD_FillColor(uint16_t color);
+extern volatile uint32_t g_lvgl_flush_count;
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -116,18 +120,39 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /*
-   * FreeRTOS 启动成功后，该任务会周期性翻转两个测试 LED。
-   * 现象：红绿灯交替闪烁，说明调度器已启动且任务正在运行。
-   */
+  uint32_t delay_ms;
+  uint32_t last_heartbeat_tick = 0U;
+  uint32_t last_flush_count = 0U;
+  uint32_t last_can_heartbeat_tick = 0U;
+
   for(;;)
   {
-    HAL_GPIO_TogglePin(GPIOD, LED_RED_Pin);
-    HAL_GPIO_TogglePin(GPIOD, LED_GREEN_Pin);
-    LCD_FillColor(0xF800);
-    osDelay(500);
-    LCD_FillColor(0xFFFF);
-    osDelay(500);
+    Dashboard_UI_Process();
+    delay_ms = lv_timer_handler();
+
+    if((HAL_GetTick() - last_heartbeat_tick) >= 250U) {
+      last_heartbeat_tick = HAL_GetTick();
+      HAL_GPIO_TogglePin(GPIOD, LED_GREEN_Pin);
+    }
+
+    if((HAL_GetTick() - last_can_heartbeat_tick) >= 500U) {
+      last_can_heartbeat_tick = HAL_GetTick();
+      CAN1_SendHeartbeat();
+    }
+
+    if(g_lvgl_flush_count != last_flush_count) {
+      last_flush_count = g_lvgl_flush_count;
+      HAL_GPIO_TogglePin(GPIOD, LED_RED_Pin);
+    }
+
+    if(delay_ms < 5U) {
+      delay_ms = 5U;
+    }
+    if(delay_ms > 20U) {
+      delay_ms = 20U;
+    }
+
+    osDelay(delay_ms);
   }
   /* USER CODE END StartDefaultTask */
 }

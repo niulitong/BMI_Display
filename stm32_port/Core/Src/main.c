@@ -31,6 +31,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "../lvgl/lvgl.h"
+#include "dashboard_ui.h"
 
 /* USER CODE END Includes */
 
@@ -52,6 +54,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+static lv_display_t * g_lvgl_display;
+static uint16_t g_lvgl_draw_buf[480 * 20];
+volatile uint32_t g_lvgl_flush_count;
 
 /* USER CODE END PV */
 
@@ -61,19 +66,136 @@ void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 void SSD1963_Init(void);
 void LCD_FillColor(uint16_t color);
+void LVGL_Port_Init(void);
+void LED_Diag_SetBootStage(uint8_t stage);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define LCD_HOR_RES 480
+#define LCD_VER_RES 272
+
 // 1. 基础读写宏 (保持 A16 逻辑)
 #define LCD_REG  *(__IO uint16_t *)(0x60000000)
 #define LCD_DATA *(__IO uint16_t *)(0x60020000)
 
+static void LCD_SetAddressWindow(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
+{
+  LCD_REG = 0x2A;
+  LCD_DATA = x1 >> 8;
+  LCD_DATA = x1 & 0xFF;
+  LCD_DATA = x2 >> 8;
+  LCD_DATA = x2 & 0xFF;
+
+  LCD_REG = 0x2B;
+  LCD_DATA = y1 >> 8;
+  LCD_DATA = y1 & 0xFF;
+  LCD_DATA = y2 >> 8;
+  LCD_DATA = y2 & 0xFF;
+
+  LCD_REG = 0x2C;
+}
+
+static void LCD_WritePixels(const uint16_t * colors, uint32_t pixel_count)
+{
+  uint32_t index;
+
+  for(index = 0; index < pixel_count; index++) {
+    LCD_DATA = colors[index];
+  }
+}
+
+static void LCD_Backlight_On(void)
+{
+  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_9, GPIO_PIN_SET);
+}
+
+static void LCD_Backlight_Off(void)
+{
+  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_9, GPIO_PIN_RESET);
+}
+
+static void SSD1963_Reset_Assert(void)
+{
+  HAL_GPIO_WritePin(SSD1963_RST_GPIO_Port, SSD1963_RST_Pin, GPIO_PIN_RESET);
+}
+
+static void SSD1963_Reset_Release(void)
+{
+  HAL_GPIO_WritePin(SSD1963_RST_GPIO_Port, SSD1963_RST_Pin, GPIO_PIN_SET);
+}
+
+static void SSD1963_HardReset(void)
+{
+  SSD1963_Reset_Assert();
+  HAL_Delay(10);
+  SSD1963_Reset_Release();
+  HAL_Delay(60);
+}
+
+void LED_Diag_SetBootStage(uint8_t stage)
+{
+  switch(stage) {
+    case 0:
+      HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
+      break;
+
+    case 1:
+      HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
+      break;
+
+    case 2:
+      HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
+      break;
+
+    default:
+      HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
+      break;
+  }
+}
+
+static void lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * px_map)
+{
+  uint32_t width = (uint32_t)(area->x2 - area->x1 + 1);
+  uint32_t height = (uint32_t)(area->y2 - area->y1 + 1);
+
+  LCD_SetAddressWindow((uint16_t)area->x1, (uint16_t)area->y1, (uint16_t)area->x2, (uint16_t)area->y2);
+  LCD_WritePixels((const uint16_t *)px_map, width * height);
+  g_lvgl_flush_count++;
+  lv_display_flush_ready(disp);
+}
+
+void LVGL_Port_Init(void)
+{
+  lv_init();
+  lv_tick_set_cb(HAL_GetTick);
+
+  g_lvgl_display = lv_display_create(LCD_HOR_RES, LCD_VER_RES);
+  lv_display_set_color_format(g_lvgl_display, LV_COLOR_FORMAT_RGB565);
+  lv_display_set_flush_cb(g_lvgl_display, lvgl_flush_cb);
+  lv_display_set_buffers(g_lvgl_display,
+               g_lvgl_draw_buf,
+               NULL,
+               sizeof(g_lvgl_draw_buf),
+               LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+  Dashboard_UI_Init();
+  lv_refr_now(g_lvgl_display);
+  LED_Diag_SetBootStage(2);
+}
+
 // 2. 商家标准的 SSD1963 初始化序列
 void SSD1963_Init(void) {
     // 等待屏幕上电稳定
-    HAL_Delay(100);
+  HAL_Delay(10);
+
+    LCD_REG = 0x01;
+    HAL_Delay(10);
 
     // --- PLL 配置 ---
     LCD_REG = 0xE2;
@@ -128,6 +250,7 @@ void SSD1963_Init(void) {
     LCD_DATA = 0x03; // 16-bit(565 format)
 
     LCD_REG = 0x29; // 开启显示
+  HAL_Delay(10);
 }
 
 // 3. 读取 ID 测试函数 (用于诊断)
@@ -144,20 +267,8 @@ void LCD_FillColor(uint16_t color)
 {
     uint32_t i;
 
-    LCD_REG = 0x2A;
-    LCD_DATA = 0x00;
-    LCD_DATA = 0x00;
-    LCD_DATA = (480 - 1) >> 8;
-    LCD_DATA = (480 - 1) & 0xFF;
-
-    LCD_REG = 0x2B;
-    LCD_DATA = 0x00;
-    LCD_DATA = 0x00;
-    LCD_DATA = (272 - 1) >> 8;
-    LCD_DATA = (272 - 1) & 0xFF;
-
-    LCD_REG = 0x2C;
-    for (i = 0; i < (480UL * 272UL); i++)
+  LCD_SetAddressWindow(0, 0, LCD_HOR_RES - 1, LCD_VER_RES - 1);
+  for (i = 0; i < ((uint32_t)LCD_HOR_RES * LCD_VER_RES); i++)
     {
         LCD_DATA = color;
     }
@@ -204,15 +315,26 @@ int main(void)
   MX_FATFS_Init();
   MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
-  HAL_GPIO_WritePin(GPIOF,GPIO_PIN_9 , GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
+  CAN1_Filter_Config();
+  if(HAL_CAN_Start(&hcan1) != HAL_OK) {
+    Error_Handler();
+  }
+  if(HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
+    Error_Handler();
+  }
 
-  HAL_Delay(1000);
+  LCD_Backlight_Off();
+  SSD1963_Reset_Assert();
+  LED_Diag_SetBootStage(0);
 
-  SSD1963_Init();
   HAL_Delay(50);
-  LCD_FillColor(0xFFFF);
+
+  SSD1963_HardReset();
+  SSD1963_Init();
+  LED_Diag_SetBootStage(1);
+  LVGL_Port_Init();
+  HAL_Delay(10);
+  LCD_Backlight_On();
   /* USER CODE END 2 */
 
   /* Init scheduler */
