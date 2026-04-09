@@ -55,4 +55,3 @@ void CAN1_SendHeartbeat(void);
 #endif
 
 #endif /* __CAN_H__ */
-
