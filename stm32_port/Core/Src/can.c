@@ -32,14 +32,15 @@ CAN_RxHeaderTypeDef RxHeader;
 uint8_t CAN_RxData[8] = { 0 };
 uint16_t CAN1_RX_MSG_ID[4] = {0x401, 0x501, 0x502, 0x50};
 static dashboard_data_t g_can_dashboard_data = {
-  .speed = 0,
-  .soc = 72,
+  .speed = 24,
+  .soc = 24,
   .mode_index = 0,
-  .torque = {120, 118, 116, 114},
-  .rpm = {800, 790, 780, 770},
-  .sum_voltage = 72,
-  .sum_current = 15,
-  .max_temperature = 46,
+  .torque = {24, 24, 24, 24},
+  .motor_enable = {1, 1, 1, 1},
+  .rpm = {24, 24, 24, 24},
+  .sum_voltage = 24,
+  .sum_current = 24,
+  .max_temperature = 24,
 };
 /* USER CODE END 0 */
 
@@ -348,6 +349,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     g_can_dashboard_data.speed = (int32_t)CAN_RxData[0];
     for(index = 0; index < 4U; index++) {
       g_can_dashboard_data.torque[index] = (int32_t)CAN_RxData[index + 3U];
+      g_can_dashboard_data.motor_enable[index] = (uint8_t)(CAN_RxData[index + 3U] != 0U);
     }
     g_can_dashboard_data.mode_index = (int32_t)CAN_RxData[7];
 	}

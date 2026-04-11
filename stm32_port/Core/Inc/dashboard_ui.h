@@ -11,7 +11,11 @@ typedef struct {
 	int32_t speed;
 	int32_t soc;
 	int32_t mode_index;
+	/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR */
 	int32_t torque[4];
+	/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR */
+	uint8_t motor_enable[4];
+	/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR */
 	int32_t rpm[4];
 	int32_t sum_voltage;
 	int32_t sum_current;
