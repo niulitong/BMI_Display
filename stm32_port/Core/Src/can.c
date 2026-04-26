@@ -20,6 +20,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "can.h"
 
+#include "cmsis_os.h"
+
 #include "dashboard_ui.h"
 
 /* USER CODE BEGIN 0 */
@@ -320,6 +322,33 @@ void CAN1_SendHeartbeat(void)
   heartbeat_data[7] = 0x01;
 
   User_CAN_Send_sq(CAN1_ID, heartbeat_data);
+}
+
+void CAN_RequestDriveMode(int32_t mode_index)
+{
+  uint8_t mode_data[8] = {0};
+
+  if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0U) {
+    return;
+  }
+
+  mode_data[0] = (uint8_t)mode_index;  // Mode index in byte 0
+  // Other bytes can be set as needed
+
+  User_CAN_Send_sq(0x310, mode_data);  // Send to ID 0x310
+}
+
+void CAN_ServiceTask(void *argument)
+{
+  /* USER CODE BEGIN CAN_ServiceTask */
+  (void)argument;
+
+  for(;;)
+  {
+    /* CAN service task - currently handled in interrupts */
+    osDelay(1000);
+  }
+  /* USER CODE END CAN_ServiceTask */
 }
 
 /*

@@ -4,6 +4,8 @@
 
 #include "../lvgl/lvgl.h"
 
+#include "can.h"
+
 typedef struct {
     lv_obj_t * speed_bar_mask;
     lv_obj_t * speed_bar_gradient;
@@ -676,4 +678,19 @@ void Dashboard_UI_Init(void)
 
     lv_screen_load(screen);
     dashboard_apply_data();
+}
+
+static void dashboard_toggle_mode(void)
+{
+    g_drive_mode = (g_drive_mode + 1) % 4;  // Cycle through modes
+    g_mode_index = (int32_t)g_drive_mode;
+    CAN_RequestDriveMode(g_mode_index);  // Send mode via CAN
+    apply_vehicle_ui();  // Update UI
+}
+
+void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed)
+{
+    if (pressed) {
+        dashboard_toggle_mode();
+    }
 }

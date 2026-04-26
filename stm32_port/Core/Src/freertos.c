@@ -29,6 +29,7 @@
 #include "can.h"
 #include "dashboard_ui.h"
 #include "../lvgl/lvgl.h"
+#include "touch.h"
 
 extern void LCD_FillColor(uint16_t color);
 extern volatile uint32_t g_lvgl_flush_count;
@@ -58,6 +59,14 @@ osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+
+/* Definitions for touchTask */
+osThreadId_t touchTaskHandle;
+const osThreadAttr_t touchTask_attributes = {
+  .name = "touchTask",
+  .stack_size = 1024 * 2,
   .priority = (osPriority_t) osPriorityNormal,
 };
 
@@ -101,7 +110,8 @@ void MX_FREERTOS_Init(void) {
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  /* creation of touchTask */
+  touchTaskHandle = osThreadNew(Touch_ServiceTask, NULL, &touchTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -161,3 +171,4 @@ void StartDefaultTask(void *argument)
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
+

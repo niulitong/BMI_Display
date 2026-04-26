@@ -14,6 +14,7 @@
 "./Core/Src/syscalls.o"
 "./Core/Src/sysmem.o"
 "./Core/Src/system_stm32f4xx.o"
+"./Core/Src/touch.o"
 "./Core/Src/usart.o"
 "./Core/Startup/startup_stm32f407zetx.o"
 "./Core/lvgl/porting/lv_port_indev.o"

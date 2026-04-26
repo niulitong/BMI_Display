@@ -48,6 +48,8 @@ void CAN1_Filter_Config(void);
 void User_CAN_Send(void);
 void User_CAN_Send_sq(uint32_t CAN_ID_NEW,uint8_t* CAN_TxData_NEW);
 void CAN1_SendHeartbeat(void);
+void CAN_ServiceTask(void *argument);
+void CAN_RequestDriveMode(int32_t mode_index);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
@@ -55,3 +57,4 @@ void CAN1_SendHeartbeat(void);
 #endif
 
 #endif /* __CAN_H__ */
+

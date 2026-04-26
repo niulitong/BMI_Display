@@ -76,7 +76,7 @@ void LED_Diag_SetBootStage(uint8_t stage);
 #define LCD_HOR_RES 480
 #define LCD_VER_RES 272
 
-// 1. 基础读写宏 (保持 A16 逻辑)
+// 1. 基础读写宏 (保持 A17 逻辑)
 #define LCD_REG  *(__IO uint16_t *)(0x60000000)
 #define LCD_DATA *(__IO uint16_t *)(0x60020000)
 
@@ -199,7 +199,7 @@ void SSD1963_Init(void) {
 
     // --- PLL 配置 ---
     LCD_REG = 0xE2;
-    LCD_DATA = 0x2D; // 商家源码参数 N=45
+    LCD_DATA = 0x23; // N=35
     LCD_DATA = 0x02; // M=2
     LCD_DATA = 0x04; // 验证标志
 
@@ -251,6 +251,18 @@ void SSD1963_Init(void) {
 
     LCD_REG = 0x29; // 开启显示
   HAL_Delay(10);
+
+    // --- PWM 和背光设置 ---
+    LCD_REG = 0xD0; // 设置自动亮度控制DBC
+    LCD_DATA = 0x00; // disable DBC
+
+    LCD_REG = 0xBE; // 配置PWM输出
+    LCD_DATA = 0x05; // 1 设置PWM频率
+    LCD_DATA = 0xFF; // PWM占空比 (最大亮度)
+    LCD_DATA = 0x01; // PWM由主机控制
+    LCD_DATA = 0x00; // PWM极性
+    LCD_DATA = 0x00; // DBC手动亮度
+    LCD_DATA = 0x00; // DBC最小亮度
 }
 
 // 3. 读取 ID 测试函数 (用于诊断)
