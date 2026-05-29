@@ -3,53 +3,271 @@
 #include "main.h"
 
 #include "dashboard_ui.h"
+#include "spi.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
 
-__weak uint8_t Touch_Driver_ReadPoint(uint16_t *x, uint16_t *y)
+#if BOARD_BRINGUP_MINIMAL
+
+void Touch_ServiceTask(void *argument)
 {
-    /* Call FT5426 read function */
-    return Touch_Ft5426ReadPoint(x, y);
+    (void)argument;
+    for(;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 }
 
-uint8_t Touch_Ft5426ReadPoint(uint16_t *x, uint16_t *y)
+void Touch_Process(void)
 {
-    uint8_t buf[5];
-    uint8_t i = 0;
-    uint8_t res = 0;
+}
 
-    /* Start I2C communication */
-    Touch_I2cStart();
-    Touch_I2cSendByte(0x70);  /* FT5426 address 0x38 << 1 */
-    if(Touch_I2cWaitAck() != 0) {
-        Touch_I2cStop();
-        return 0;
+uint8_t Touch_Driver_ReadPoint(uint16_t *x, uint16_t *y)
+{
+    (void)x;
+    (void)y;
+    return 0U;
+}
+
+uint8_t Touch_Xpt2046ReadPoint(uint16_t *x, uint16_t *y)
+{
+    (void)x;
+    (void)y;
+    return 0U;
+}
+
+uint8_t Touch_Xpt2046Init(void)
+{
+    return 0U;
+}
+
+#else
+
+#define TOUCH_CMD_READ_X 0x90U
+#define TOUCH_CMD_READ_Y 0xD0U
+#define TOUCH_CMD_READ_Z1 0xB0U
+#define TOUCH_CMD_READ_Z2 0xC0U
+
+#ifndef TOUCH_RAW_X_MIN
+#define TOUCH_RAW_X_MIN 200U
+#endif
+#ifndef TOUCH_RAW_X_MAX
+#define TOUCH_RAW_X_MAX 3900U
+#endif
+#ifndef TOUCH_RAW_Y_MIN
+#define TOUCH_RAW_Y_MIN 200U
+#endif
+#ifndef TOUCH_RAW_Y_MAX
+#define TOUCH_RAW_Y_MAX 3900U
+#endif
+#ifndef TOUCH_INVERT_X
+#define TOUCH_INVERT_X 0U
+#endif
+#ifndef TOUCH_INVERT_Y
+#define TOUCH_INVERT_Y 0U
+#endif
+
+#define TOUCH_HOR_RES 480U
+#define TOUCH_VER_RES 272U
+#define TOUCH_SAMPLE_COUNT 5U
+#define TOUCH_SAMPLE_DROP 1U
+#define TOUCH_ERR_RANGE 50U
+#define TOUCH_SPI_TIMEOUT_MS 10U
+#define TOUCH_RAW_PRESS_MIN 100U
+
+#define TOUCH_DEBUG_LED_PORT GPIOD
+#define TOUCH_DEBUG_LED_PIN LED_GREEN_Pin
+
+static volatile uint8_t g_touch_task_alive;
+static volatile uint8_t g_touch_debug_has_pressure;
+static volatile uint8_t g_touch_debug_spi_error;
+static volatile uint8_t g_touch_debug_has_nonzero_raw;
+static volatile uint16_t g_touch_debug_last_z1;
+static volatile uint16_t g_touch_debug_last_z2;
+static volatile uint16_t g_touch_state_x;
+static volatile uint16_t g_touch_state_y;
+static volatile uint8_t g_touch_state_pressed;
+static volatile uint8_t g_touch_state_changed;
+
+static void Touch_Select(void)
+{
+    HAL_GPIO_WritePin(TOUCH_CS_GPIO_Port, TOUCH_CS_Pin, GPIO_PIN_RESET);
+}
+
+static void Touch_Unselect(void)
+{
+    HAL_GPIO_WritePin(TOUCH_CS_GPIO_Port, TOUCH_CS_Pin, GPIO_PIN_SET);
+}
+
+static uint16_t Touch_ReadAdc(uint8_t command)
+{
+    uint8_t tx[3] = {command, 0U, 0U};
+    uint8_t rx[3] = {0U, 0U, 0U};
+    uint16_t data;
+
+    if(HAL_SPI_TransmitReceive(&hspi1, tx, rx, sizeof(tx), TOUCH_SPI_TIMEOUT_MS) != HAL_OK) {
+        g_touch_debug_spi_error = 1U;
+        return 0U;
     }
-    Touch_I2cSendByte(0x02);  /* Register address */
-    Touch_I2cWaitAck();
-    Touch_I2cStop();
 
-    /* Read data */
-    Touch_I2cStart();
-    Touch_I2cSendByte(0x71);  /* Read address */
-    Touch_I2cWaitAck();
+    g_touch_debug_spi_error = 0U;
+    data = (uint16_t)(((uint16_t)rx[1] << 8) | rx[2]);
+    return (uint16_t)(data >> 3);
+}
 
-    for(i = 0; i < 4; i++) {
-        buf[i] = Touch_I2cReadByte((i == 3) ? 0 : 1);  /* Last byte NACK */
-    }
-    Touch_I2cStop();
+static uint16_t Touch_ReadFiltered(uint8_t command)
+{
+    uint16_t samples[TOUCH_SAMPLE_COUNT];
+    uint32_t sum = 0U;
+    uint16_t temp;
+    uint8_t i;
+    uint8_t j;
 
-    /* Parse data */
-    if((buf[0] & 0x0F) > 0) {  /* Touch detected */
-        *x = ((uint16_t)(buf[0] & 0x0F) << 8) | buf[1];
-        *y = ((uint16_t)(buf[2] & 0x0F) << 8) | buf[3];
-        res = 1;
-    } else {
-        res = 0;
+    for(i = 0U; i < TOUCH_SAMPLE_COUNT; i++) {
+        samples[i] = Touch_ReadAdc(command);
     }
 
-    return res;
+    for(i = 0U; i < (TOUCH_SAMPLE_COUNT - 1U); i++) {
+        for(j = (uint8_t)(i + 1U); j < TOUCH_SAMPLE_COUNT; j++) {
+            if(samples[i] > samples[j]) {
+                temp = samples[i];
+                samples[i] = samples[j];
+                samples[j] = temp;
+            }
+        }
+    }
+
+    for(i = TOUCH_SAMPLE_DROP; i < (TOUCH_SAMPLE_COUNT - TOUCH_SAMPLE_DROP); i++) {
+        sum += samples[i];
+    }
+
+    return (uint16_t)(sum / (TOUCH_SAMPLE_COUNT - (TOUCH_SAMPLE_DROP * 2U)));
+}
+
+static uint8_t Touch_ReadRawXY(uint16_t *x, uint16_t *y)
+{
+    uint16_t x_raw;
+    uint16_t y_raw;
+    uint16_t z1_raw;
+    uint16_t z2_raw;
+
+    if((x == NULL) || (y == NULL)) {
+        return 0U;
+    }
+
+    Touch_Select();
+    z1_raw = Touch_ReadAdc(TOUCH_CMD_READ_Z1);
+    z2_raw = Touch_ReadAdc(TOUCH_CMD_READ_Z2);
+    x_raw = Touch_ReadFiltered(TOUCH_CMD_READ_X);
+    y_raw = Touch_ReadFiltered(TOUCH_CMD_READ_Y);
+    Touch_Unselect();
+
+    g_touch_debug_last_z1 = z1_raw;
+    g_touch_debug_last_z2 = z2_raw;
+    g_touch_debug_has_nonzero_raw = (uint8_t)(((x_raw != 0U) || (y_raw != 0U) ||
+                                               (z1_raw != 0U) || (z2_raw != 0U)) ? 1U : 0U);
+
+    if((x_raw < TOUCH_RAW_PRESS_MIN) || (y_raw < TOUCH_RAW_PRESS_MIN)) {
+        return 0U;
+    }
+
+    *x = x_raw;
+    *y = y_raw;
+    return 1U;
+}
+
+static uint16_t Touch_AbsDiff(uint16_t a, uint16_t b)
+{
+    return a > b ? (uint16_t)(a - b) : (uint16_t)(b - a);
+}
+
+static uint16_t Touch_MapRaw(uint16_t raw, uint16_t raw_min, uint16_t raw_max, uint16_t out_max, uint8_t invert)
+{
+    uint32_t value;
+
+    if(raw_max <= raw_min) {
+        return 0U;
+    }
+    if(raw < raw_min) raw = raw_min;
+    if(raw > raw_max) raw = raw_max;
+
+    value = ((uint32_t)(raw - raw_min) * (uint32_t)(out_max - 1U)) / (uint32_t)(raw_max - raw_min);
+    if(invert != 0U) {
+        value = (uint32_t)(out_max - 1U) - value;
+    }
+
+    return (uint16_t)value;
+}
+
+__weak uint8_t Touch_Driver_ReadPoint(uint16_t *x, uint16_t *y)
+{
+    return Touch_Xpt2046ReadPoint(x, y);
+}
+
+uint8_t Touch_Xpt2046ReadPoint(uint16_t *x, uint16_t *y)
+{
+    uint16_t x1;
+    uint16_t y1;
+    uint16_t x2;
+    uint16_t y2;
+
+    if((x == NULL) || (y == NULL)) {
+        return 0U;
+    }
+
+    if(Touch_ReadRawXY(&x1, &y1) == 0U) {
+        g_touch_debug_has_pressure = 0U;
+        return 0U;
+    }
+
+    if(Touch_ReadRawXY(&x2, &y2) == 0U) {
+        g_touch_debug_has_pressure = 0U;
+        return 0U;
+    }
+
+    if((Touch_AbsDiff(x1, x2) >= TOUCH_ERR_RANGE) || (Touch_AbsDiff(y1, y2) >= TOUCH_ERR_RANGE)) {
+        g_touch_debug_has_pressure = 0U;
+        return 0U;
+    }
+
+    g_touch_debug_has_pressure = 1U;
+
+    *x = Touch_MapRaw((uint16_t)((x1 + x2) / 2U), TOUCH_RAW_X_MIN, TOUCH_RAW_X_MAX,
+                      TOUCH_HOR_RES, TOUCH_INVERT_X);
+    *y = Touch_MapRaw((uint16_t)((y1 + y2) / 2U), TOUCH_RAW_Y_MIN, TOUCH_RAW_Y_MAX,
+                      TOUCH_VER_RES, TOUCH_INVERT_Y);
+
+    return 1U;
+}
+
+uint8_t Touch_Xpt2046Init(void)
+{
+    Touch_Unselect();
+    return 0U;
+}
+
+void Touch_Process(void)
+{
+    uint16_t x;
+    uint16_t y;
+    uint8_t pressed;
+    uint8_t changed;
+    uint32_t primask;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    x = g_touch_state_x;
+    y = g_touch_state_y;
+    pressed = g_touch_state_pressed;
+    changed = g_touch_state_changed;
+    g_touch_state_changed = 0U;
+    if(primask == 0U) {
+        __enable_irq();
+    }
+
+    if((pressed != 0U) || (changed != 0U)) {
+        Dashboard_UI_SubmitTouchState(x, y, pressed);
+    }
 }
 
 void Touch_ServiceTask(void *argument)
@@ -58,23 +276,65 @@ void Touch_ServiceTask(void *argument)
     uint16_t y = 0U;
     uint8_t pressed = 0U;
     uint8_t last_pressed = 0U;
+    uint32_t last_debug_tick = 0U;
 
     (void)argument;
 
-    /* Initialize FT5426 touch controller */
-    if(Touch_Ft5426Init() != 0U) {
+    if(Touch_Xpt2046Init() != 0U) {
         /* Initialization failed, exit task */
         vTaskDelete(NULL);
     }
 
     for(;;) {
+        g_touch_task_alive ^= 1U;
         pressed = Touch_Driver_ReadPoint(&x, &y);
 
-        if((pressed != 0U) || (last_pressed != 0U)) {
-            Dashboard_UI_SubmitTouchState(x, y, pressed);
+        if((HAL_GetTick() - last_debug_tick) >= 100U) {
+            last_debug_tick = HAL_GetTick();
+            if(g_touch_debug_spi_error != 0U) {
+                HAL_GPIO_WritePin(TOUCH_DEBUG_LED_PORT, TOUCH_DEBUG_LED_PIN, GPIO_PIN_SET);
+            }
+            else if(g_touch_debug_has_pressure != 0U) {
+                HAL_GPIO_TogglePin(TOUCH_DEBUG_LED_PORT, TOUCH_DEBUG_LED_PIN);
+            }
+            else if(g_touch_debug_has_nonzero_raw != 0U) {
+                HAL_GPIO_WritePin(TOUCH_DEBUG_LED_PORT, TOUCH_DEBUG_LED_PIN,
+                                  g_touch_task_alive != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
+            }
+            else {
+                HAL_GPIO_WritePin(TOUCH_DEBUG_LED_PORT, TOUCH_DEBUG_LED_PIN,
+                                  g_touch_task_alive != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
+            }
+        }
+
+        if(pressed != 0U) {
+            uint32_t primask = __get_PRIMASK();
+            __disable_irq();
+            g_touch_state_x = x;
+            g_touch_state_y = y;
+            if(pressed != last_pressed) {
+                g_touch_state_changed = 1U;
+            }
+            g_touch_state_pressed = pressed;
+            if(primask == 0U) {
+                __enable_irq();
+            }
+        }
+        else {
+            uint32_t primask = __get_PRIMASK();
+            __disable_irq();
+            if(pressed != last_pressed) {
+                g_touch_state_changed = 1U;
+            }
+            g_touch_state_pressed = pressed;
+            if(primask == 0U) {
+                __enable_irq();
+            }
         }
 
         last_pressed = pressed;
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
+
+#endif

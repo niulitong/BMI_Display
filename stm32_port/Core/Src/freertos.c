@@ -62,13 +62,14 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 
-/* Definitions for touchTask */
+/* USER CODE BEGIN TouchTask */
 osThreadId_t touchTaskHandle;
 const osThreadAttr_t touchTask_attributes = {
   .name = "touchTask",
   .stack_size = 1024 * 2,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* USER CODE END TouchTask */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -137,12 +138,12 @@ void StartDefaultTask(void *argument)
 
   for(;;)
   {
+    Touch_Process();
     Dashboard_UI_Process();
     delay_ms = lv_timer_handler();
 
     if((HAL_GetTick() - last_heartbeat_tick) >= 250U) {
       last_heartbeat_tick = HAL_GetTick();
-      HAL_GPIO_TogglePin(GPIOD, LED_GREEN_Pin);
     }
 
     if((HAL_GetTick() - last_can_heartbeat_tick) >= 500U) {
@@ -152,7 +153,6 @@ void StartDefaultTask(void *argument)
 
     if(g_lvgl_flush_count != last_flush_count) {
       last_flush_count = g_lvgl_flush_count;
-      HAL_GPIO_TogglePin(GPIOD, LED_RED_Pin);
     }
 
     if(delay_ms < 5U) {

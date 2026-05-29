@@ -41,7 +41,7 @@
 //      T_CLK         --->            PB0             //电阻触摸屏SPI总线或电容触摸屏IIC总线时钟信号
 *************************************************************************************/		
 #include "touch.h" 
-#include "ft5426.h"
+#include "GT911.h"
 #include "rtp.h"	
     
 //初始化触摸屏控制器参数
@@ -69,7 +69,7 @@ u8 TP_Init(void)
 {
 	u8 ret=0;
 #if TP_TYPE
-	ret=FT5426_Init();
+	ret=GT911_Init();
 	tp_dev.touchtype|=0x80;			//电容屏 
 #else	
 	ret=RTP_Init();

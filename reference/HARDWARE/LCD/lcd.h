@@ -66,8 +66,8 @@ extern _lcd_dev lcddev;	//管理LCD重要参数
 
 //////////////////////////////////////////////////////////////////////////////////	  
 //定义LCD的尺寸
-#define LCD_W 272
-#define LCD_H 480
+#define LCD_W 480
+#define LCD_H 800
 
 //TFTLCD部分外要调用的函数		   
 extern u16  POINT_COLOR;//默认红色    
@@ -75,11 +75,11 @@ extern u16  BACK_COLOR; //背景颜色.默认为白色
 
 ////////////////////////////////////////////////////////////////////
 //-----------------LCD端口定义---------------- 
-#define LED  9        //背光控制引脚              PB15
+#define LED  15        //背光控制引脚              PB15
 #define RST  13         //复位引脚                 PD13
 
 //采用了三极管控制背光亮灭，用户也可以接PWM调节背光亮度
-#define	LCD_LED PFout(LED) //LCD背光    		 
+#define	LCD_LED PBout(LED) //LCD背光    		 
 #define LCD_RST PDout(RST) //复位引脚              PD13
 
 //LCD地址结构体
@@ -156,16 +156,16 @@ u16 LCD_Read_ID(void);
 void LCD_PWM_BackLightSet(u8 pwm);
 
 //LCD分辨率设置
-#define SSD_HOR_RESOLUTION		480		//LCD水平分辨率
-#define SSD_VER_RESOLUTION		272		//LCD垂直分辨率
+#define SSD_HOR_RESOLUTION		800		//LCD水平分辨率
+#define SSD_VER_RESOLUTION		480		//LCD垂直分辨率
 //LCD驱动参数设置
 #define SSD_HOR_PULSE_WIDTH		1		//水平脉宽
-#define SSD_HOR_BACK_PORCH		43		//水平前廊
-#define SSD_HOR_FRONT_PORCH		8		//水平后廊
+#define SSD_HOR_BACK_PORCH		46		//水平前廊
+#define SSD_HOR_FRONT_PORCH		210		//水平后廊
 
 #define SSD_VER_PULSE_WIDTH		1		//垂直脉宽
-#define SSD_VER_BACK_PORCH		12		//垂直前廊
-#define SSD_VER_FRONT_PORCH		8		//垂直前廊
+#define SSD_VER_BACK_PORCH		23		//垂直前廊
+#define SSD_VER_FRONT_PORCH		22		//垂直前廊
 //如下几个参数，自动计算
 #define SSD_HT	(SSD_HOR_RESOLUTION+SSD_HOR_BACK_PORCH+SSD_HOR_FRONT_PORCH)
 #define SSD_HPS	(SSD_HOR_BACK_PORCH)

@@ -48,96 +48,28 @@
 #include "test.h"
 #include "led.h"
 
-// 1. 棋盘格测试：检测数据线干扰 (Crosstalk)
-// 如果看到画面闪烁、有杂点或横线，说明排母处的信号干扰严重
-void Test_Checkerboard(void) {
-    uint32_t i;
-    LCD_SetWindows(0, 0, 480-1, 272-1);
-    for (i = 0; i < 480 * 272; i++) {
-        // 每隔一个点变换颜色
-        if ((i % 2 == 0)) LCD_WR_DATA(0xFFFF); // 白色
-        else LCD_WR_DATA(0x0000);             // 黑色
-    }
-}
-
-// 2. 纯色压力测试：检测位权错误 (Bit Error)
-// 依次刷 红、绿、蓝。
-// 如果红屏上有细微绿点，说明数据线 D5-D10 某根线与 D11-D15 有串扰
-void Test_ColorBurst(uint16_t color) {
-    uint32_t i;
-    LCD_SetWindows(0, 0, 480-1, 272-1);
-    for (i = 0; i < 480 * 272; i++) {
-        LCD_WR_DATA(color);
-    }
-}
-
-// 3. 逐行扫描测试：检测行同步 (HSYNC/Porch)
-// 如果线条不是笔直的，或者在移动时发生断裂，说明 SSD1963 的时序参数不对
-void Test_MovingLine(uint16_t y_pos) {
-    uint16_t x;
-    LCD_SetWindows(0, y_pos, 480-1, y_pos); // 只刷一行
-    for (x = 0; x < 480; x++) {
-        LCD_WR_DATA(0xF800); // 红色行
-    }
-}
 int main(void)
 {	
-	uint16_t line = 0;
 	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);//设置系统中断优先级分组2
 	delay_init(168);     //初始化延时函数
-	delay_ms(1000);
 	LED_Init();
 	LCD_Init();	   //液晶屏初始化
   //循环测试
-	//while(1)
-	//{
-		//main_test(); 		//测试主界面
-		//Test_Read();     //读ID和颜色值测试
-		//Test_Color();  		//简单刷屏填充测试
-		//Test_FillRec();		//GUI矩形绘图测试
-		//Test_Circle(); 		//GUI画圆测试
-		//Test_Triangle();    //GUI三角形绘图测试
-		//English_Font_test();//英文字体示例测试
-		//Chinese_Font_test();//中文字体示例测试
-		//Pic_test();			//图片显示示例测试
-		//Test_Dynamic_Num();  //动态数字显示
-		//Rotate_Test();   //旋转显示测试
+	while(1)
+	{
+		main_test(); 		//测试主界面
+		Test_Read();     //读ID和颜色值测试
+		Test_Color();  		//简单刷屏填充测试
+		Test_FillRec();		//GUI矩形绘图测试
+		Test_Circle(); 		//GUI画圆测试
+		Test_Triangle();    //GUI三角形绘图测试
+		English_Font_test();//英文字体示例测试
+		Chinese_Font_test();//中文字体示例测试
+		Pic_test();			//图片显示示例测试
+		Test_Dynamic_Num();  //动态数字显示
+		Rotate_Test();   //旋转显示测试
 		//如果不带触摸，或者不需要触摸功能，请注释掉下面触摸屏测试项
-		//Touch_Test();		//触摸屏手写测试  
-	//}
-	/* USER CODE BEGIN WHILE */
-	GPIO_SetBits(GPIOF, GPIO_Pin_9);
-
-while (1)
-{
-	// 每次切换测试模式时，翻转一次 LED 状态
-    GPIO_ToggleBits(GPIOD, GPIO_Pin_12); // 假设 LED_RED 在 PD12，请改为你板子上的实际引脚
-    
-    Test_ColorBurst(0xF800); 
-    delay_ms(1000);
-    
-    Test_ColorBurst(0x07E0); 
-    delay_ms(1000);
-    // --- 模式 1: 颜色压力测试 (每隔 1秒换一种三原色) ---
-    Test_ColorBurst(0xF800); // 纯红
-    delay_ms(1000);
-    Test_ColorBurst(0x07E0); // 纯绿
-    delay_ms(1000);
-    Test_ColorBurst(0x001F); // 纯蓝
-    delay_ms(1000);
-
-    // --- 模式 2: 棋盘格测试 (高频信号完整性测试) ---
-    Test_Checkerboard();
-    delay_ms(2000);
-    
-    // --- 模式 3: 动态扫描 (测试同步) ---
-     LCD_Clear(WHITE); 
-     for(line=0; line<272; line++) {
-        Test_MovingLine(line);
-        delay_ms(5);
-     }
-    
-    /* USER CODE END WHILE */
-}
+		Touch_Test();		//触摸屏手写测试  
+	}
 }
 

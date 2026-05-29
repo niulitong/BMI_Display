@@ -297,23 +297,23 @@ void LCD_GPIOInit(void)
   FSMC_NORSRAMTimingInitTypeDef  readWriteTiming; 
 	FSMC_NORSRAMTimingInitTypeDef  writeTiming;
 	
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB|RCC_AHB1Periph_GPIOD|RCC_AHB1Periph_GPIOE|RCC_AHB1Periph_GPIOF, ENABLE);//使能PD,PE,PF,PG时钟  
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB|RCC_AHB1Periph_GPIOD|RCC_AHB1Periph_GPIOE, ENABLE);//使能PD,PE,PF,PG时钟  
   RCC_AHB3PeriphClockCmd(RCC_AHB3Periph_FSMC,ENABLE);//使能FSMC时钟  
 	
  
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_9;//PB15 推挽输出,控制背光
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_15;//PB15 推挽输出,控制背光
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;//普通输出模式
   GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;//推挽输出
   GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;//100MHz
   GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;//上拉
-  GPIO_Init(GPIOF, &GPIO_InitStructure);//初始化 //PB15 推挽输出,控制背光
+  GPIO_Init(GPIOB, &GPIO_InitStructure);//初始化 //PB15 推挽输出,控制背光
 	
-	//GPIO_InitStructure.GPIO_Pin = GPIO_Pin_13;//PD13 推挽输出,控制复位
-  //GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;//普通输出模式
-  //GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;//推挽输出
-  //GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;//100MHz
-  //GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;//上拉
-  //GPIO_Init(GPIOD, &GPIO_InitStructure);//初始化 //PB15 推挽输出,控制背光
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_13;//PD13 推挽输出,控制复位
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;//普通输出模式
+  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;//推挽输出
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;//100MHz
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;//上拉
+  GPIO_Init(GPIOD, &GPIO_InitStructure);//初始化 //PB15 推挽输出,控制背光
 	
   GPIO_InitStructure.GPIO_Pin = (3<<0)|(3<<4)|(7<<8)|(3<<14);//PD0,1,4,5,8,9,10,14,15 AF OUT
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;//复用输出
@@ -372,7 +372,7 @@ void LCD_GPIOInit(void)
 
 	writeTiming.FSMC_AddressSetupTime =9;	      //地址建立时间（ADDSET）为9个HCLK =54ns 
   writeTiming.FSMC_AddressHoldTime = 0x00;	 //地址保持时间（A		
-  writeTiming.FSMC_DataSetupTime = 9;		 //数据保存时间为6ns*9个HCLK=54ns
+  writeTiming.FSMC_DataSetupTime = 8;		 //数据保存时间为6ns*9个HCLK=54ns
   writeTiming.FSMC_BusTurnAroundDuration = 0x00;
   writeTiming.FSMC_CLKDivision = 0x00;
   writeTiming.FSMC_DataLatency = 0x00;
@@ -406,8 +406,8 @@ void LCD_GPIOInit(void)
 	//重新配置写时序控制寄存器的时序使WR时序为最快   	 							    
 	FSMC_Bank1E->BWTR[0]&=~(0XF<<0);//地址建立时间(ADDSET)清零 	 
 	FSMC_Bank1E->BWTR[0]&=~(0XF<<8);//数据保存时间清零
-	FSMC_Bank1E->BWTR[0]|=10<<0;		//地址建立时间(ADDSET)为4个HCLK =24ns  	 
-	FSMC_Bank1E->BWTR[0]|=10<<8; 	//数据保存时间(DATAST)为6ns*4个HCLK=24ns
+	FSMC_Bank1E->BWTR[0]|=4<<0;		//地址建立时间(ADDSET)为4个HCLK =24ns  	 
+	FSMC_Bank1E->BWTR[0]|=4<<8; 	//数据保存时间(DATAST)为6ns*4个HCLK=24ns
 }
 
 /*****************************************************************************
@@ -436,26 +436,26 @@ void LCD_Init(void)
 {  
 	LCD_GPIOInit();//LCD GPIO初始化	
 	delay_ms(100);
-	LCD_RESET();    //如果不使用开发板复位引脚，则调用此复位函数
+	//LCD_RESET();    //如果不使用开发板复位引脚，则调用此复位函数
 //************* SSD1963初始化**********//	
 	LCD_WR_REG(0xE2);		//Set PLL with OSC = 10MHz (hardware),	Multiplier N = 35, 250MHz < VCO < 800MHz = OSC*(N+1), VCO = 300MHz
-	LCD_WR_DATA(0x2D);		//参数1 
+	LCD_WR_DATA(0x1D);		//参数1 
 	LCD_WR_DATA(0x02);		//参数2 Divider M = 2, PLL = 300/(M+1) = 100MHz
 	LCD_WR_DATA(0x04);		//参数3 Validate M and N values   
-	delay_us(500);
+	delay_us(100);
 	LCD_WR_REG(0xE0);		// Start PLL command
 	LCD_WR_DATA(0x01);		// enable PLL
-	delay_ms(20);
+	delay_ms(10);
 	LCD_WR_REG(0xE0);		// Start PLL command again
 	LCD_WR_DATA(0x03);		// now, use PLL output as system clock	
-	delay_ms(20);  
+	delay_ms(12);  
 	LCD_WR_REG(0x01);		//软复位
 	delay_ms(10);
 		
 	LCD_WR_REG(0xE6);		//设置像素频率,33Mhz
-	LCD_WR_DATA(0x00);
+	LCD_WR_DATA(0x03);
 	LCD_WR_DATA(0xFF);
-	LCD_WR_DATA(0xBE);
+	LCD_WR_DATA(0xFF);
 		
 	LCD_WR_REG(0xB0);		//设置LCD模式
 	LCD_WR_DATA(0x20);		//24位模式
@@ -481,7 +481,7 @@ void LCD_Init(void)
 	LCD_WR_DATA(SSD_VT-1);
 	LCD_WR_DATA(SSD_VPS>>8);
 	LCD_WR_DATA(SSD_VPS);
-	LCD_WR_DATA(SSD_VER_PULSE_WIDTH-1);
+	LCD_WR_DATA(SSD_VER_FRONT_PORCH-1);
 	LCD_WR_DATA(0x00);
 	LCD_WR_DATA(0x00);
 		

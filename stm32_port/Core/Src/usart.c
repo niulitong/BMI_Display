@@ -22,9 +22,76 @@
 
 /* USER CODE BEGIN 0 */
 
+static uint8_t g_usart2_rx_byte;
+static char g_usart2_line_buf[16];
+static uint8_t g_usart2_line_len;
+
+static void USART2_RestartReceive(void)
+{
+  (void)HAL_UART_Receive_IT(&huart2, &g_usart2_rx_byte, 1U);
+}
+
+static void USART2_ProcessLine(const char * line)
+{
+  char cleaned[16];
+  uint8_t src_index = 0U;
+  uint8_t dst_index = 0U;
+  char * end_ptr;
+  float parsed_value;
+  int32_t delta_hundredths;
+
+  if(line == NULL) {
+    return;
+  }
+
+  while((line[src_index] != '\0') && (dst_index < (uint8_t)(sizeof(cleaned) - 1U))) {
+    unsigned char ch = (unsigned char)line[src_index++];
+    if((ch == '+') || (ch == '-') || (ch == '.') || isdigit(ch)) {
+      cleaned[dst_index++] = (char)ch;
+    }
+  }
+  cleaned[dst_index] = '\0';
+
+  if((dst_index < 2U) || ((cleaned[0] != '+') && (cleaned[0] != '-'))) {
+    return;
+  }
+
+  parsed_value = strtof(cleaned, &end_ptr);
+  if((end_ptr == cleaned) || (*end_ptr != '\0')) {
+    return;
+  }
+
+  delta_hundredths = (int32_t)(parsed_value * 100.0f);
+  Dashboard_UI_SubmitLapDelta(delta_hundredths);
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if(huart == &huart2) {
+    char ch = (char)g_usart2_rx_byte;
+
+    if((ch == '\r') || (ch == '\n')) {
+      if(g_usart2_line_len > 0U) {
+        g_usart2_line_buf[g_usart2_line_len] = '\0';
+        USART2_ProcessLine(g_usart2_line_buf);
+        g_usart2_line_len = 0U;
+      }
+    }
+    else if(g_usart2_line_len < (uint8_t)(sizeof(g_usart2_line_buf) - 1U)) {
+      g_usart2_line_buf[g_usart2_line_len++] = ch;
+    }
+    else {
+      g_usart2_line_len = 0U;
+    }
+
+    USART2_RestartReceive();
+  }
+}
+
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart1_rx;
 DMA_HandleTypeDef hdma_usart1_tx;
@@ -58,6 +125,39 @@ void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
+}
+/* USART2 init function */
+
+void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 9600;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  g_usart2_line_len = 0U;
+  memset(g_usart2_line_buf, 0, sizeof(g_usart2_line_buf));
+  USART2_RestartReceive();
+
+  /* USER CODE END USART2_Init 2 */
 
 }
 /* USART3 init function */
@@ -165,6 +265,34 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
   /* USER CODE END USART1_MspInit 1 */
   }
+  else if(uartHandle->Instance==USART2)
+  {
+  /* USER CODE BEGIN USART2_MspInit 0 */
+
+  /* USER CODE END USART2_MspInit 0 */
+    /* USART2 clock enable */
+    __HAL_RCC_USART2_CLK_ENABLE();
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    /**USART2 GPIO Configuration
+    PA2     ------> USART2_TX
+    PA3     ------> USART2_RX
+    */
+    GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_3;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF7_USART2;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN USART2_MspInit 1 */
+
+    /* USART2 interrupt Init */
+    HAL_NVIC_SetPriority(USART2_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(USART2_IRQn);
+
+  /* USER CODE END USART2_MspInit 1 */
+  }
   else if(uartHandle->Instance==USART3)
   {
   /* USER CODE BEGIN USART3_MspInit 0 */
@@ -264,6 +392,26 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
   /* USER CODE BEGIN USART1_MspDeInit 1 */
 
   /* USER CODE END USART1_MspDeInit 1 */
+  }
+  else if(uartHandle->Instance==USART2)
+  {
+  /* USER CODE BEGIN USART2_MspDeInit 0 */
+
+  /* USER CODE END USART2_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_USART2_CLK_DISABLE();
+
+    /**USART2 GPIO Configuration
+    PA2     ------> USART2_TX
+    PA3     ------> USART2_RX
+    */
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_2|GPIO_PIN_3);
+
+  /* USER CODE BEGIN USART2_MspDeInit 1 */
+
+    HAL_NVIC_DisableIRQ(USART2_IRQn);
+
+  /* USER CODE END USART2_MspDeInit 1 */
   }
   else if(uartHandle->Instance==USART3)
   {

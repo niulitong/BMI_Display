@@ -25,6 +25,7 @@ typedef struct {
 void Dashboard_UI_Init(void);
 void Dashboard_UI_Process(void);
 void Dashboard_UI_SubmitData(const dashboard_data_t * data);
+void Dashboard_UI_SubmitLapDelta(int32_t delta_hundredths);
 void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed);
 
 #ifdef __cplusplus

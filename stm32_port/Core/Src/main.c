@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
-#include "adc.h"
 #include "can.h"
 #include "dma.h"
 #include "fatfs.h"
@@ -73,6 +72,45 @@ void LED_Diag_SetBootStage(uint8_t stage);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#if BOARD_BRINGUP_MINIMAL
+#define MX_DMA_Init() ((void)0)
+#define MX_CAN1_Init() ((void)0)
+#define MX_CAN2_Init() ((void)0)
+#define MX_RTC_Init() ((void)0)
+#define MX_SPI1_Init() ((void)0)
+#define MX_USART1_UART_Init() ((void)0)
+#define MX_USART3_UART_Init() ((void)0)
+#define MX_FATFS_Init() ((void)0)
+#define MX_FSMC_Init() ((void)0)
+#define MX_USART2_UART_Init() ((void)0)
+#define osKernelInitialize() ((void)0)
+#define MX_FREERTOS_Init() ((void)0)
+#define osKernelStart() ((void)0)
+
+static void BoardBringup_MinimalInit(void)
+{
+  HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
+}
+
+static void BoardBringup_MinimalLoop(void)
+{
+  static uint8_t led_phase = 0U;
+
+  if(led_phase == 0U) {
+    HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
+  }
+  else {
+    HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
+  }
+
+  led_phase ^= 1U;
+  HAL_Delay(200);
+}
+#endif
+
 #define LCD_HOR_RES 480
 #define LCD_VER_RES 272
 
@@ -317,7 +355,6 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_ADC1_Init();
   MX_CAN1_Init();
   MX_CAN2_Init();
   MX_RTC_Init();
@@ -326,7 +363,11 @@ int main(void)
   MX_USART3_UART_Init();
   MX_FATFS_Init();
   MX_FSMC_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+#if BOARD_BRINGUP_MINIMAL
+  BoardBringup_MinimalInit();
+#else
   CAN1_Filter_Config();
   if(HAL_CAN_Start(&hcan1) != HAL_OK) {
     Error_Handler();
@@ -347,6 +388,7 @@ int main(void)
   LVGL_Port_Init();
   HAL_Delay(10);
   LCD_Backlight_On();
+#endif
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -365,6 +407,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+#if BOARD_BRINGUP_MINIMAL
+    BoardBringup_MinimalLoop();
+#endif
   }
   /* USER CODE END 3 */
 }

@@ -20,9 +20,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "can.h"
 
-#include "cmsis_os.h"
-
+/* USER CODE BEGIN Includes */
+#include "cmsis_os2.h"
 #include "dashboard_ui.h"
+/* USER CODE END Includes */
 
 /* USER CODE BEGIN 0 */
 CAN_TxHeaderTypeDef TxHeader;

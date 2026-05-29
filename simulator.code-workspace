@@ -36,7 +36,7 @@
 		"tasks": [
 			{
 				"label": "Build",
-				"command": "cmake",
+				"command": "E:\\lvgl\\cmake-4.1.2-windows-x86_64\\bin\\cmake.exe",
 				"args": [
 					"--build", "${command:cmake.buildDirectory}"
 				],
@@ -59,8 +59,13 @@
 			},
 			{
 				"label": "Build and Run",
-				"type": "shell",
-				"command": "${workspaceFolder}/bin/main",
+				"type": "process",
+				"command": "${workspaceFolder}\\bin\\main.exe",
+				"options": {
+					"env": {
+						"PATH": "E:\\lvgl\\mingw64\\bin;${env:PATH}"
+					}
+				},
 				"group": {
 					"kind": "test",
 					"isDefault": true

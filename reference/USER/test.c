@@ -50,7 +50,7 @@
 #include "key.h" 
 #include "led.h"
 #include "pic.h"
-#include "ft5426.h"
+#include "GT911.h"
 #include "rtp.h"
 #include "exti.h"
 
@@ -360,7 +360,7 @@ void Ctp_Test(void)
 	while(1)
 	{
 		j++;
-		FT5426_Scan();
+		GT911_Scan();
 		for(t=0;t<OTT_MAX_TOUCH;t++)//最多5点触摸
 		{
 			if((tp_dev.sta)&(1<<t))//判断是否有点触摸？

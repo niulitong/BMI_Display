@@ -57,14 +57,20 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define IPS_INT_Pin GPIO_PIN_4
+#define IPS_INT_GPIO_Port GPIOG
+#define IPS_RST_Pin GPIO_PIN_5
+#define IPS_RST_GPIO_Port GPIOG
 #define LED_RED_Pin GPIO_PIN_12
 #define LED_RED_GPIO_Port GPIOD
 #define LED_GREEN_Pin GPIO_PIN_13
 #define LED_GREEN_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
-#define SSD1963_RST_Pin GPIO_PIN_3
-#define SSD1963_RST_GPIO_Port GPIOG
+#define BOARD_BRINGUP_MINIMAL 1
+
+#define SSD1963_RST_Pin IPS_RST_Pin
+#define SSD1963_RST_GPIO_Port IPS_RST_GPIO_Port
 
 /* USER CODE END Private defines */
 
