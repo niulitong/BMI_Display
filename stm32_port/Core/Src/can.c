@@ -33,7 +33,10 @@ uint32_t CAN1_ID = 0x102;
 static uint8_t g_can_heartbeat_counter;
 CAN_RxHeaderTypeDef RxHeader;
 uint8_t CAN_RxData[8] = { 0 };
-uint16_t CAN1_RX_MSG_ID[4] = {0x401, 0x501, 0x502, 0x50};
+uint16_t CAN1_RX_MSG_ID_BANK0[4] = {0x401, 0x305, 0x502, 0x505};
+uint16_t CAN1_RX_MSG_ID_BANK1[4] = {0x506, 0x509, 0x508, 0x507};
+uint16_t CAN1_RX_MSG_ID_BANK2[4] = {0x503, 0x504, 0x503, 0x504};
+uint16_t CAN1_RX_MSG_ID_BANK3[4] = {0x050, 0x050, 0x050, 0x050};
 static dashboard_data_t g_can_dashboard_data = {
   .speed = 24,
   .soc = 24,
@@ -44,6 +47,23 @@ static dashboard_data_t g_can_dashboard_data = {
   .sum_voltage = 24,
   .sum_current = 24,
   .max_temperature = 24,
+  .motor_temp = {48, 47, 49, 50},
+  .aps_open_pct = 0,
+  .steering_angle = 0,
+  .oil_pressure = 0,
+  .igbt_temp = {0, 0, 0, 0},
+  .inverter_temp = {0, 0, 0, 0},
+  .diag_num = {0, 0, 0, 0},
+  .imu_accel = {0, 0, 0},
+  .imu_gyro = {0, 0, 0},
+  .imu_roll = 0,
+  .imu_pitch = 0,
+  .imu_yaw = 0,
+  .imu_mag = {0, 0, 0},
+  .signal_level = 0,
+  .alert_active = 1,
+  .odometer_tenths = 412,
+  .brake_pct = 10,
 };
 /* USER CODE END 0 */
 
@@ -262,18 +282,44 @@ void HAL_CAN_MspDeInit(CAN_HandleTypeDef* canHandle)
  */
 void CAN1_Filter_Config(void)
 {
-	CAN_FilterTypeDef CAN_FilterInitStructure = {
-			.FilterActivation = ENABLE,                    //enable the filter
-			.FilterBank = 0x00,                            //encode the filters family,range:0-13
-			.FilterFIFOAssignment = CAN_FILTER_FIFO0,      //报文储存FIFO编号，FIFO0
-			.FilterIdHigh = CAN1_RX_MSG_ID[0]<<5,           //first ID
-			.FilterIdLow = CAN1_RX_MSG_ID[1]<<5,            //second ID
-			.FilterMaskIdHigh = CAN1_RX_MSG_ID[2]<<5,       //third ID
-			.FilterMaskIdLow = CAN1_RX_MSG_ID[3]<<5,        //fourth ID
-			.FilterMode = CAN_FILTERMODE_IDLIST,           //ID列表模式
-			.FilterScale = CAN_FILTERSCALE_16BIT,          //16位，一个过滤器组可设置4个可通过ID
-			.SlaveStartFilterBank = 0                      //主从过滤器分界线，单CAN无意义
-	};
+	CAN_FilterTypeDef CAN_FilterInitStructure;
+
+	/* Bank 0: BMS(0x401), DataLogger(0x305), Debug2_Torque(0x502), Debug5_Velocity(0x505) */
+	CAN_FilterInitStructure.FilterActivation = ENABLE;
+	CAN_FilterInitStructure.FilterBank = 0x00;
+	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK0[0] << 5;
+	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK0[1] << 5;
+	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK0[2] << 5;
+	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK0[3] << 5;
+	CAN_FilterInitStructure.FilterMode = CAN_FILTERMODE_IDLIST;
+	CAN_FilterInitStructure.FilterScale = CAN_FILTERSCALE_16BIT;
+	CAN_FilterInitStructure.SlaveStartFilterBank = 0;
+	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
+
+	/* Bank 1: Debug6_MotorTemp(0x506), Debug9_Status(0x509), Debug8_IGBT(0x508), Debug7_Inverter(0x507) */
+	CAN_FilterInitStructure.FilterBank = 0x01;
+	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK1[0] << 5;
+	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK1[1] << 5;
+	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK1[2] << 5;
+	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK1[3] << 5;
+	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
+
+	/* Bank 2: Debug3_Diag12(0x503), Debug4_Diag34(0x504) */
+	CAN_FilterInitStructure.FilterBank = 0x02;
+	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK2[0] << 5;
+	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK2[1] << 5;
+	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK2[2] << 5;
+	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK2[3] << 5;
+	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
+
+	/* Bank 3: IMU_Raw(0x50) -> FIFO1 */
+	CAN_FilterInitStructure.FilterBank = 0x03;
+	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO1;
+	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK3[0] << 5;
+	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK3[1] << 5;
+	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK3[2] << 5;
+	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK3[3] << 5;
 	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
 }
 
@@ -353,117 +399,244 @@ void CAN_ServiceTask(void *argument)
 }
 
 /*
- * @func: CAN1报文接收中断[FIFO0]
+ * @func: CAN1 message receive interrupt [FIFO0]
+ * DBC: Vehicle_CanB.dbc
+ * Wheel order mapping: DBC {RL,RR,FL,FR} -> Dashboard {LF,LR,RF,RR}
  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
 	if(HAL_CAN_GetRxMessage(hcan, CAN_FILTER_FIFO0, &RxHeader, CAN_RxData)!= HAL_OK)
 	{
-		// 错误处理
-	    Error_Handler();
+		Error_Handler();
 	}
-//	printf("ID:0x%h\r\n",RxHeader.StdId);
 
-	//根据不同的ID，获得不同的信息，具体请看车队的CAN协议
-	if(RxHeader.StdId==0x401)
+	switch(RxHeader.StdId)
 	{
-    g_can_dashboard_data.soc = (int32_t)CAN_RxData[6];
-    g_can_dashboard_data.sum_voltage = (int32_t)CAN_RxData[0] + ((int32_t)CAN_RxData[1] * 256);
-    g_can_dashboard_data.sum_current = (int32_t)CAN_RxData[4] + ((int32_t)CAN_RxData[5] * 256);
-    g_can_dashboard_data.max_temperature = (int32_t)CAN_RxData[7];
-	}
-	if(RxHeader.StdId==0x501)//新增电机扭矩与常态化驾驶模式
-	{
-    uint32_t index;
+	  /* 0x401 BMS: SOC, voltage, current, temperature (original protocol, unchanged) */
+	  case 0x401:
+	  {
+	    g_can_dashboard_data.soc = (int32_t)CAN_RxData[6];
+	    g_can_dashboard_data.sum_voltage = (int32_t)CAN_RxData[0] + ((int32_t)CAN_RxData[1] * 256);
+	    g_can_dashboard_data.sum_current = (int32_t)CAN_RxData[4] + ((int32_t)CAN_RxData[5] * 256);
+	    g_can_dashboard_data.max_temperature = (int32_t)CAN_RxData[7];
+	    break;
+	  }
 
-    g_can_dashboard_data.speed = (int32_t)CAN_RxData[0];
-    for(index = 0; index < 4U; index++) {
-      g_can_dashboard_data.torque[index] = (int32_t)CAN_RxData[index + 3U];
-      g_can_dashboard_data.motor_enable[index] = (uint8_t)(CAN_RxData[index + 3U] != 0U);
+	  /* 0x305 DataLogger: steering angle, APS (accelerator pedal), oil pressure */
+	  case 0x305:
+	  {
+	    g_can_dashboard_data.steering_angle = (int32_t)(int16_t)(CAN_RxData[0] | ((uint16_t)CAN_RxData[1] << 8));
+	    {
+	      uint16_t aps_raw = (uint16_t)CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8);
+	      g_can_dashboard_data.aps_open_pct = (int32_t)(aps_raw / 10U);
+	    }
+	    {
+	      uint16_t oil_raw = (uint16_t)CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8);
+	      g_can_dashboard_data.oil_pressure = (int32_t)oil_raw;
+	    }
+	    break;
+	  }
+
+	  /* 0x502 Debug2: actual torque per wheel, 16-bit signed each */
+	  case 0x502:
+	  {
+	    /* DBC order: RL(0), RR(1), FL(2), FR(3) -> Dashboard: LF(0), LR(1), RF(2), RR(3) */
+	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
+	    uint32_t i;
+	    for(i = 0U; i < 4U; i++) {
+	      int16_t raw = (int16_t)(CAN_RxData[i * 2U] | ((uint16_t)CAN_RxData[i * 2U + 1U] << 8));
+	      g_can_dashboard_data.torque[dbc_map[i]] = (int32_t)raw;
+	    }
+	    break;
+	  }
+
+	  /* 0x505 Debug5: actual velocity per wheel, 16-bit signed each */
+	  case 0x505:
+	  {
+	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
+	    uint32_t i;
+	    for(i = 0U; i < 4U; i++) {
+	      int16_t raw = (int16_t)(CAN_RxData[i * 2U] | ((uint16_t)CAN_RxData[i * 2U + 1U] << 8));
+	      g_can_dashboard_data.rpm[dbc_map[i]] = (int32_t)raw;
+	    }
+	    break;
+	  }
+
+	  /* 0x506 Debug6: motor temperature per wheel, 16-bit signed, scale=0.1 */
+	  case 0x506:
+	  {
+	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
+	    uint32_t i;
+	    for(i = 0U; i < 4U; i++) {
+	      int16_t raw = (int16_t)(CAN_RxData[i * 2U] | ((uint16_t)CAN_RxData[i * 2U + 1U] << 8));
+	      g_can_dashboard_data.motor_temp[dbc_map[i]] = (int32_t)(raw / 10);
+	    }
+	    break;
+	  }
+
+	  /* 0x509 Debug9: motor status flags + ModeFlag, DLC=5 */
+	  case 0x509:
+	  {
+	    /* Byte2 bit4~7: RL, RR, FL, FR bEnable */
+	    /* DBC order: RL_bEnable(byte2.7), RR_bEnable(byte2.6), FL_bEnable(byte2.5), FR_bEnable(byte2.4) */
+	    /* Map to Dashboard: LF=RF_en(2.5), LR=RL_en(2.7), RF=FR_en(2.4), RR=RR_en(2.6) */
+	    g_can_dashboard_data.motor_enable[0] = (CAN_RxData[2] >> 5) & 0x01U;
+	    g_can_dashboard_data.motor_enable[1] = (CAN_RxData[2] >> 7) & 0x01U;
+	    g_can_dashboard_data.motor_enable[2] = (CAN_RxData[2] >> 4) & 0x01U;
+	    g_can_dashboard_data.motor_enable[3] = (CAN_RxData[2] >> 6) & 0x01U;
+
+	    /* Byte0 bit4~7: ModeFlag, signed 4-bit, range [-8, 7] */
+	    {
+	      int32_t mode_val = (int32_t)((CAN_RxData[0] >> 4) & 0x0FU);
+	      if(mode_val & 8) mode_val -= 16;
+	      g_can_dashboard_data.mode_index = mode_val;
+	    }
+	    break;
+	  }
+
+	  /* 0x508 Debug8: IGBT temperature per wheel, 16-bit signed, scale=0.1 */
+	  case 0x508:
+	  {
+	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
+	    uint32_t i;
+	    for(i = 0U; i < 4U; i++) {
+	      int16_t raw = (int16_t)(CAN_RxData[i * 2U] | ((uint16_t)CAN_RxData[i * 2U + 1U] << 8));
+	      g_can_dashboard_data.igbt_temp[dbc_map[i]] = (int32_t)(raw / 10);
+	    }
+	    break;
+	  }
+
+	  /* 0x507 Debug7: Inverter temperature per wheel, 16-bit signed, scale=0.1 */
+	  case 0x507:
+	  {
+	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
+	    uint32_t i;
+	    for(i = 0U; i < 4U; i++) {
+	      int16_t raw = (int16_t)(CAN_RxData[i * 2U] | ((uint16_t)CAN_RxData[i * 2U + 1U] << 8));
+	      g_can_dashboard_data.inverter_temp[dbc_map[i]] = (int32_t)(raw / 10);
+	    }
+	    break;
+	  }
+
+	  /* 0x504 Debug4: Diagnostic_number_3, Diagnostic_number_4, 32-bit unsigned each */
+	  case 0x504:
+	  {
+	    g_can_dashboard_data.diag_num[2] = (uint32_t)CAN_RxData[0]
+	      | ((uint32_t)CAN_RxData[1] << 8)
+	      | ((uint32_t)CAN_RxData[2] << 16)
+	      | ((uint32_t)CAN_RxData[3] << 24);
+	    g_can_dashboard_data.diag_num[3] = (uint32_t)CAN_RxData[4]
+	      | ((uint32_t)CAN_RxData[5] << 8)
+	      | ((uint32_t)CAN_RxData[6] << 16)
+	      | ((uint32_t)CAN_RxData[7] << 24);
+	    break;
+	  }
+
+	  /* 0x503 Debug3: Diagnostic_number_1, Diagnostic_number_2, 32-bit unsigned each */
+	  case 0x503:
+	  {
+	    g_can_dashboard_data.diag_num[0] = (uint32_t)CAN_RxData[0]
+	      | ((uint32_t)CAN_RxData[1] << 8)
+	      | ((uint32_t)CAN_RxData[2] << 16)
+	      | ((uint32_t)CAN_RxData[3] << 24);
+	    g_can_dashboard_data.diag_num[1] = (uint32_t)CAN_RxData[4]
+	      | ((uint32_t)CAN_RxData[5] << 8)
+	      | ((uint32_t)CAN_RxData[6] << 16)
+	      | ((uint32_t)CAN_RxData[7] << 24);
+	    break;
+	  }
+
+	  default:
+	    break;
     }
-    g_can_dashboard_data.mode_index = (int32_t)CAN_RxData[7];
-	}
-	if(RxHeader.StdId==0x502)
-	{
-    uint32_t index;
 
-    for(index = 0; index < 4U; index++) {
-      g_can_dashboard_data.rpm[index] = (int32_t)CAN_RxData[index];
-    }
-	}
+    Dashboard_UI_SubmitData(&g_can_dashboard_data);
+}
+
+void CAN_SendGPSSpeed(int32_t speed_kmh)
+{
+  uint8_t speed_data[8] = {0};
+
+  if(speed_kmh < 0) speed_kmh = 0;
+  if(speed_kmh > 300) speed_kmh = 300;
+
+  speed_data[0] = (uint8_t)(speed_kmh & 0xFFU);
+  speed_data[1] = (uint8_t)((speed_kmh >> 8) & 0xFFU);
+
+  g_can_dashboard_data.speed = speed_kmh;
+
+  if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) > 0U) {
+    User_CAN_Send_sq(0x301, speed_data);
+  }
 
   Dashboard_UI_SubmitData(&g_can_dashboard_data);
-//	if(RxHeader.StdId==0x50)//IMU 回发与数据处理
-//	{
-////		User_CAN_Send_sq(0x03,CAN_RxData);
-//		if(CAN_RxData[1]==0x50)
-//		{
-//			User_CAN_Send_sq(0x60,CAN_RxData);
-//		}else if(CAN_RxData[1]==0x51)
-//		{
-//			User_CAN_Send_sq(0x61,CAN_RxData);
-//
-//		}else if(CAN_RxData[1]==0x52){
-//			User_CAN_Send_sq(0x62,CAN_RxData);
-//
-//		}else if(CAN_RxData[1]==0x53){
-//			if(CAN_RxData[2]==0x01)
-//			{
-//				User_CAN_Send_sq(0x63,CAN_RxData);
-//			}else if(CAN_RxData[2]==0x02)
-//			{
-//				User_CAN_Send_sq(0x64,CAN_RxData);
-//			}else if(CAN_RxData[2]==0x03)
-//			{
-//				User_CAN_Send_sq(0x65,CAN_RxData);
-//			}
-//
-//		}else if(CAN_RxData[1]==0x54){
-//			User_CAN_Send_sq(0x66,CAN_RxData);
-//		}
-//	}
-
 }
 
 /*
- * @func: CAN锟斤拷锟侥斤拷锟斤拷锟叫讹拷[FIFO1],锟斤拷锟�0x50
+ * @func: CAN FIFO1 callback - IMU raw data (0x50) relay to parsed IDs (0x60~0x66)
+ * DBC: Vehicle_CanB.dbc, BO_ 80 IMU_Raw -> BO_ 96~102
  */
+void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+	if(HAL_CAN_GetRxMessage(hcan, CAN_FILTER_FIFO1, &RxHeader, CAN_RxData)!= HAL_OK)
+	{
+		Error_Handler();
+	}
 
-//void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
-//{
-//	if(HAL_CAN_GetRxMessage(hcan, CAN_FILTER_FIFO0, &RxHeader, CAN_RxData)!= HAL_OK)
-//	{
-//	    // 锟斤拷锟斤拷锟斤拷
-//	    Error_Handler();
-//	}
-//	printf("ID:0x%X\r\n",RxHeader.StdId);
-//	if(RxHeader.StdId==0x50)
-//	{
-//		if(CAN_RxData[1]==0x50)
-//		{
-//			User_CAN_Send_sq(0x60,CAN_RxData);
-//		}else if(CAN_RxData[1]==0x51)
-//		{
-//			User_CAN_Send_sq(0x61,CAN_RxData);
-//		}else if(CAN_RxData[1]==0x52){
-//			User_CAN_Send_sq(0x62,CAN_RxData);
-//		}else if(CAN_RxData[1]==0x53){
-//			if(CAN_RxData[2]==0x01)
-//			{
-//				User_CAN_Send_sq(0x63,CAN_RxData);
-//			}else if(CAN_RxData[2]==0x02)
-//			{
-//				User_CAN_Send_sq(0x64,CAN_RxData);
-//			}else if(CAN_RxData[2]==0x03)
-//			{
-//				User_CAN_Send_sq(0x65,CAN_RxData);
-//			}
-//
-//		}else if(CAN_RxData[1]==0x54){
-//			User_CAN_Send_sq(0x66,CAN_RxData);
-//		}
-//	}
-//
-//}
+	if(RxHeader.StdId != 0x50U) return;
+	if(CAN_RxData[0] != 0x55U) return;
+
+	switch(CAN_RxData[1])
+	{
+	  case 0x50U:
+	    User_CAN_Send_sq(0x60, CAN_RxData);
+	    break;
+	  case 0x51U:
+	  {
+	    User_CAN_Send_sq(0x61, CAN_RxData);
+	    g_can_dashboard_data.imu_accel[0] = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
+	    g_can_dashboard_data.imu_accel[1] = (int32_t)(int16_t)(CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8));
+	    g_can_dashboard_data.imu_accel[2] = (int32_t)(int16_t)(CAN_RxData[6] | ((uint16_t)CAN_RxData[7] << 8));
+	    break;
+	  }
+	  case 0x52U:
+	  {
+	    User_CAN_Send_sq(0x62, CAN_RxData);
+	    g_can_dashboard_data.imu_gyro[0] = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
+	    g_can_dashboard_data.imu_gyro[1] = (int32_t)(int16_t)(CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8));
+	    g_can_dashboard_data.imu_gyro[2] = (int32_t)(int16_t)(CAN_RxData[6] | ((uint16_t)CAN_RxData[7] << 8));
+	    break;
+	  }
+	  case 0x53U:
+	  {
+	    if(CAN_RxData[2] == 0x01U)
+	    {
+	      User_CAN_Send_sq(0x63, CAN_RxData);
+	      g_can_dashboard_data.imu_roll = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
+	    }
+	    else if(CAN_RxData[2] == 0x02U)
+	    {
+	      User_CAN_Send_sq(0x64, CAN_RxData);
+	      g_can_dashboard_data.imu_pitch = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
+	    }
+	    else if(CAN_RxData[2] == 0x03U)
+	    {
+	      User_CAN_Send_sq(0x65, CAN_RxData);
+	      g_can_dashboard_data.imu_yaw = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
+	    }
+	    break;
+	  }
+	  case 0x54U:
+	  {
+	    User_CAN_Send_sq(0x66, CAN_RxData);
+	    g_can_dashboard_data.imu_mag[0] = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
+	    g_can_dashboard_data.imu_mag[1] = (int32_t)(int16_t)(CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8));
+	    g_can_dashboard_data.imu_mag[2] = (int32_t)(int16_t)(CAN_RxData[6] | ((uint16_t)CAN_RxData[7] << 8));
+	    break;
+	  }
+	  default:
+	    break;
+	}
+}
 
 /* USER CODE END 1 */

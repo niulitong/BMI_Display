@@ -25,6 +25,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash_ramfunc.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_sram.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_fsmc.h \
+ ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_i2c.h \
+ ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_i2c_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc.h \
@@ -50,9 +52,10 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Middlewares/Third_Party/FatFs/src/ff_gen_drv.h \
  ../Middlewares/Third_Party/FatFs/src/diskio.h \
  ../Middlewares/Third_Party/FatFs/src/ff.h ../FATFS/Target/user_diskio.h \
- ../Core/Inc/rtc.h ../Core/Inc/spi.h ../Core/Inc/usart.h \
- ../Core/Inc/gpio.h ../Core/Inc/fsmc.h ../Core/Src/../lvgl/lvgl.h \
- ../Core/Src/../lvgl/lv_version.h ../Core/Src/../lvgl/src/lv_init.h \
+ ../Core/Inc/i2c.h ../Core/Inc/rtc.h ../Core/Inc/spi.h \
+ ../Core/Inc/usart.h ../Core/Inc/gpio.h ../Core/Inc/fsmc.h \
+ ../Core/Src/../lvgl/lvgl.h ../Core/Src/../lvgl/lv_version.h \
+ ../Core/Src/../lvgl/src/lv_init.h \
  ../Core/Src/../lvgl/src/lv_conf_internal.h \
  ../Core/Src/../lvgl/src/lv_conf_kconfig.h \
  ../Core/Src/../lvgl/src/../../lv_conf.h \
@@ -251,11 +254,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../lvgl/src/widgets/buttonmatrix/../../core/lv_obj_property.h \
  ../Core/Src/../lvgl/src/widgets/calendar/lv_calendar.h \
  ../Core/Src/../lvgl/src/widgets/calendar/../buttonmatrix/lv_buttonmatrix.h \
- ../Core/Src/../lvgl/src/widgets/calendar/lv_calendar_header_arrow.h \
- ../Core/Src/../lvgl/src/widgets/calendar/../../core/lv_obj.h \
- ../Core/Src/../lvgl/src/widgets/calendar/lv_calendar_header_dropdown.h \
- ../Core/Src/../lvgl/src/widgets/calendar/lv_calendar_chinese.h \
- ../Core/Src/../lvgl/src/widgets/calendar/lv_calendar.h \
  ../Core/Src/../lvgl/src/widgets/canvas/lv_canvas.h \
  ../Core/Src/../lvgl/src/widgets/canvas/../../lv_conf_internal.h \
  ../Core/Src/../lvgl/src/widgets/canvas/../image/lv_image.h \
@@ -292,7 +290,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../lvgl/src/widgets/msgbox/../../core/lv_obj.h \
  ../Core/Src/../lvgl/src/widgets/roller/lv_roller.h \
  ../Core/Src/../lvgl/src/widgets/roller/../../core/lv_obj.h \
- ../Core/Src/../lvgl/src/widgets/roller/../label/lv_label.h \
  ../Core/Src/../lvgl/src/widgets/scale/lv_scale.h \
  ../Core/Src/../lvgl/src/widgets/scale/../../lv_conf_internal.h \
  ../Core/Src/../lvgl/src/widgets/scale/../../core/lv_obj.h \
@@ -525,6 +522,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash_ramfunc.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_sram.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_fsmc.h:
+../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_i2c.h:
+../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_i2c_ex.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr_ex.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc.h:
@@ -555,6 +554,7 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Middlewares/Third_Party/FatFs/src/diskio.h:
 ../Middlewares/Third_Party/FatFs/src/ff.h:
 ../FATFS/Target/user_diskio.h:
+../Core/Inc/i2c.h:
 ../Core/Inc/rtc.h:
 ../Core/Inc/spi.h:
 ../Core/Inc/usart.h:
@@ -761,11 +761,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../lvgl/src/widgets/buttonmatrix/../../core/lv_obj_property.h:
 ../Core/Src/../lvgl/src/widgets/calendar/lv_calendar.h:
 ../Core/Src/../lvgl/src/widgets/calendar/../buttonmatrix/lv_buttonmatrix.h:
-../Core/Src/../lvgl/src/widgets/calendar/lv_calendar_header_arrow.h:
-../Core/Src/../lvgl/src/widgets/calendar/../../core/lv_obj.h:
-../Core/Src/../lvgl/src/widgets/calendar/lv_calendar_header_dropdown.h:
-../Core/Src/../lvgl/src/widgets/calendar/lv_calendar_chinese.h:
-../Core/Src/../lvgl/src/widgets/calendar/lv_calendar.h:
 ../Core/Src/../lvgl/src/widgets/canvas/lv_canvas.h:
 ../Core/Src/../lvgl/src/widgets/canvas/../../lv_conf_internal.h:
 ../Core/Src/../lvgl/src/widgets/canvas/../image/lv_image.h:
@@ -802,7 +797,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../lvgl/src/widgets/msgbox/../../core/lv_obj.h:
 ../Core/Src/../lvgl/src/widgets/roller/lv_roller.h:
 ../Core/Src/../lvgl/src/widgets/roller/../../core/lv_obj.h:
-../Core/Src/../lvgl/src/widgets/roller/../label/lv_label.h:
 ../Core/Src/../lvgl/src/widgets/scale/lv_scale.h:
 ../Core/Src/../lvgl/src/widgets/scale/../../lv_conf_internal.h:
 ../Core/Src/../lvgl/src/widgets/scale/../../core/lv_obj.h:

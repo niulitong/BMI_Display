@@ -22,6 +22,12 @@
 
 /* USER CODE BEGIN 0 */
 
+#include <ctype.h>
+#include <string.h>
+#include "Locate.h"
+#include "can.h"
+#include "dashboard_ui.h"
+
 static uint8_t g_usart2_rx_byte;
 static char g_usart2_line_buf[16];
 static uint8_t g_usart2_line_len;
@@ -185,6 +191,9 @@ void MX_USART3_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART3_Init 2 */
+
+  HAL_UART_Receive_DMA(&huart3, g_gps_dma_buf, GPS_DMA_BUF_SIZE);
+  __HAL_UART_ENABLE_IT(&huart3, UART_IT_IDLE);
 
   /* USER CODE END USART3_Init 2 */
 

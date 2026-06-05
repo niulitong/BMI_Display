@@ -30,6 +30,7 @@
 #include "dashboard_ui.h"
 #include "../lvgl/lvgl.h"
 #include "touch.h"
+#include "Locate.h"
 
 extern void LCD_FillColor(uint16_t color);
 extern volatile uint32_t g_lvgl_flush_count;
@@ -113,6 +114,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
   /* creation of touchTask */
   touchTaskHandle = osThreadNew(Touch_ServiceTask, NULL, &touchTask_attributes);
+  GNSS_Init();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

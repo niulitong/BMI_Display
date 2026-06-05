@@ -7,8 +7,6 @@
 #include "can.h"
 
 typedef struct {
-    lv_obj_t * speed_bar_mask;
-    lv_obj_t * speed_bar_gradient;
     lv_obj_t * speed_digit_container;
     lv_obj_t * speed_segments[2][7];
     lv_obj_t * lap_current_label;
@@ -63,6 +61,9 @@ typedef struct {
     lv_obj_t * laps_current_value;
     lv_obj_t * laps_left_label;
     lv_obj_t * laps_left_value;
+    lv_obj_t * signal_bars[4];
+    lv_obj_t * alert_circle;
+    lv_obj_t * odometer_label;
 } dashboard_ui_t;
 
 typedef enum {
@@ -82,12 +83,12 @@ static int32_t g_rpm[4] = {24, 24, 24, 24};
 static int32_t g_sum_voltage = 24;
 static int32_t g_top_temperature = 24;
 static int32_t g_sum_current = 24;
-static int32_t g_current_lap_time = 9340;
-static int32_t g_last_lap_time = 9270;
-static int32_t g_best_lap_time = 9180;
-static int32_t g_lap_delta = 160;
-static int32_t g_laps_current = 2;
-static int32_t g_laps_left = 6;
+static int32_t g_current_lap_time = 0;
+static int32_t g_last_lap_time = 0;
+static int32_t g_best_lap_time = 0;
+static int32_t g_lap_delta = 0;
+static int32_t g_laps_current = 0;
+static int32_t g_laps_left = 0;
 static int32_t g_vehicle_distance_m = 4120;
 static int32_t g_throttle_opening = 0;
 static int32_t g_brake_force = 0;
@@ -118,9 +119,9 @@ static dashboard_data_t g_dashboard_data = {
 static volatile dashboard_data_t g_pending_dashboard_data;
 static volatile uint8_t g_dashboard_data_dirty = 0U;
 
-#define DASHBOARD_FONT_SMALL (&lv_font_montserrat_14)
-#define DASHBOARD_FONT_MEDIUM (&lv_font_montserrat_16)
-#define DASHBOARD_FONT_LARGE (&lv_font_montserrat_48)
+#define DASHBOARD_FONT_SMALL (&lv_font_montserrat_18)
+#define DASHBOARD_FONT_MEDIUM (&lv_font_montserrat_18)
+#define DASHBOARD_FONT_LARGE (&lv_font_montserrat_32)
 
 static const uint8_t g_speed_digit_map[10][7] = {
     {1, 1, 1, 1, 1, 1, 0},
@@ -155,11 +156,6 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define UI_CENTER_PANEL_WIDTH 440
 #define UI_RIGHT_PANEL_X (UI_CENTER_PANEL_X + UI_CENTER_PANEL_WIDTH)
 #define UI_RIGHT_PANEL_WIDTH (SIM_HOR_RES - UI_RIGHT_PANEL_X)
-
-#define SPEED_BAR_X UI_CENTER_PANEL_X
-#define SPEED_BAR_Y UI_MIDDLE_Y
-#define SPEED_BAR_WIDTH UI_CENTER_PANEL_WIDTH
-#define SPEED_BAR_HEIGHT 54
 
 #define MODE_TOUCH_X_MIN 0
 #define MODE_TOUCH_X_MAX UI_LEFT_PANEL_WIDTH
@@ -444,6 +440,40 @@ static void apply_vehicle_ui(void)
     else lv_obj_add_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
 }
 
+static void update_signal_bars(int32_t level)
+{
+    static const lv_color_t grey  = { 0x55, 0x55, 0x55 };
+    static const lv_color_t red   = { 0x1A, 0x1A, 0xFF };
+    static const lv_color_t yellow = { 0x00, 0xD4, 0xFF };
+    static const lv_color_t green = { 0x5A, 0xD4, 0x2F };
+    lv_color_t bar_color[4];
+
+    if(level < 0) level = 0;
+    if(level > 4) level = 4;
+    switch(level) {
+    case 0:
+        bar_color[0] = grey; bar_color[1] = grey; bar_color[2] = grey; bar_color[3] = grey;
+        break;
+    case 1:
+        bar_color[0] = red;  bar_color[1] = grey; bar_color[2] = grey; bar_color[3] = grey;
+        break;
+    case 2:
+        bar_color[0] = yellow; bar_color[1] = yellow; bar_color[2] = grey; bar_color[3] = grey;
+        break;
+    case 3:
+        bar_color[0] = green; bar_color[1] = green; bar_color[2] = green; bar_color[3] = grey;
+        break;
+    default:
+        bar_color[0] = green; bar_color[1] = green; bar_color[2] = green; bar_color[3] = green;
+        break;
+    }
+    for(uint32_t i = 0U; i < 4U; i++) {
+        if(g_dashboard.signal_bars[i] != NULL) {
+            lv_obj_set_style_bg_color(g_dashboard.signal_bars[i], bar_color[i], 0);
+        }
+    }
+}
+
 static void dashboard_apply_data(void)
 {
     static char text_buf[16];
@@ -468,7 +498,6 @@ static void dashboard_apply_data(void)
     if(display_speed > 99) display_speed = 99;
 
     set_speed_digits(display_speed);
-    lv_obj_set_width(g_dashboard.speed_bar_mask, display_speed == 0 ? 1 : (display_speed * SPEED_BAR_WIDTH / 100));
 
     g_current_lap_time = 9200 + ((99 - display_speed) * 2);
     g_lap_delta = 500 - (display_speed * 10);
@@ -526,15 +555,13 @@ static void dashboard_apply_data(void)
         lv_label_set_text(g_dashboard.power_peak_value, text_buf);
     }
 
-    g_throttle_opening = display_speed;
-    g_brake_force = 100 - display_speed;
     if(g_dashboard.throttle_bar_fill != NULL) {
-        int32_t throttle_height = g_throttle_opening == 0 ? 1 : (g_throttle_opening * PEDAL_BAR_H / 100);
+        int32_t throttle_height = g_dashboard_data.aps_open_pct == 0 ? 1 : (g_dashboard_data.aps_open_pct * PEDAL_BAR_H / 100);
         lv_obj_set_pos(g_dashboard.throttle_bar_fill, 0, PEDAL_BAR_H - throttle_height);
         lv_obj_set_size(g_dashboard.throttle_bar_fill, PEDAL_BAR_W, throttle_height);
     }
     if(g_dashboard.brake_bar_fill != NULL) {
-        int32_t brake_height = g_brake_force == 0 ? 1 : (g_brake_force * PEDAL_BAR_H / 100);
+        int32_t brake_height = g_dashboard_data.brake_pct == 0 ? 1 : (g_dashboard_data.brake_pct * PEDAL_BAR_H / 100);
         lv_obj_set_pos(g_dashboard.brake_bar_fill, 0, PEDAL_BAR_H - brake_height);
         lv_obj_set_size(g_dashboard.brake_bar_fill, PEDAL_BAR_W, brake_height);
     }
@@ -610,6 +637,36 @@ static void dashboard_apply_data(void)
     g_tire_temp_rl = 42 + g_speed / 2;
     g_tire_temp_rr = 48 + g_speed / 2;
 
+    update_signal_bars(g_dashboard_data.signal_level);
+
+    {
+        static int alert_flash_counter = 0;
+        static uint8_t alert_visible = 0U;
+        alert_flash_counter++;
+        if(g_dashboard_data.alert_active != 0U) {
+            if((alert_flash_counter % 30) == 0) {
+                alert_visible = (alert_visible == 0U) ? 1U : 0U;
+            }
+            if(alert_visible != 0U) {
+                lv_obj_remove_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
+            }
+        } else {
+            lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    {
+        int32_t odo_tenths = g_dashboard_data.odometer_tenths;
+        int32_t odo_int = odo_tenths / 10;
+        int32_t odo_frac = odo_tenths % 10;
+        if(odo_frac < 0) { odo_frac = -odo_frac; odo_int = -odo_int; }
+        if(odo_int > 999) odo_int = 999;
+        lv_snprintf(text_buf, sizeof(text_buf), "%ld.%01ld km", (long)odo_int, (long)odo_frac);
+        lv_label_set_text(g_dashboard.odometer_label, text_buf);
+    }
+
     apply_vehicle_ui();
 }
 
@@ -632,7 +689,18 @@ void Dashboard_UI_SubmitData(const dashboard_data_t * data)
         g_pending_dashboard_data.motor_enable[index] = data->motor_enable[index];
         g_pending_dashboard_data.rpm[index] = data->rpm[index];
     }
+    g_pending_dashboard_data.alert_active = data->alert_active;
+    g_pending_dashboard_data.odometer_tenths = data->odometer_tenths;
+    g_pending_dashboard_data.brake_pct = data->brake_pct;
 
+    g_dashboard_data_dirty = 1U;
+}
+
+void Dashboard_UI_SubmitSignalLevel(int32_t level)
+{
+    if(level < 0) level = 0;
+    if(level > 4) level = 4;
+    g_pending_dashboard_data.signal_level = level;
     g_dashboard_data_dirty = 1U;
 }
 
@@ -670,6 +738,10 @@ void Dashboard_UI_Process(void)
         g_dashboard_data.motor_enable[index] = g_pending_dashboard_data.motor_enable[index];
         g_dashboard_data.rpm[index] = g_pending_dashboard_data.rpm[index];
     }
+    g_dashboard_data.signal_level = g_pending_dashboard_data.signal_level;
+    g_dashboard_data.alert_active = g_pending_dashboard_data.alert_active;
+    g_dashboard_data.odometer_tenths = g_pending_dashboard_data.odometer_tenths;
+    g_dashboard_data.brake_pct = g_pending_dashboard_data.brake_pct;
     g_dashboard_data_dirty = 0U;
     if(primask == 0U) {
         __enable_irq();
@@ -688,22 +760,6 @@ void Dashboard_UI_Init(void)
     lv_obj_t * top_area = create_panel(screen, 0, 0, SIM_HOR_RES, UI_TOP_HEIGHT, UI_BG_COLOR, LV_OPA_COVER);
     lv_obj_set_style_border_width(top_area, 0, 0);
 
-    g_dashboard.speed_bar_mask = lv_obj_create(screen);
-    lv_obj_remove_style_all(g_dashboard.speed_bar_mask);
-    lv_obj_set_pos(g_dashboard.speed_bar_mask, SPEED_BAR_X, SPEED_BAR_Y);
-    lv_obj_set_size(g_dashboard.speed_bar_mask, SPEED_BAR_WIDTH, SPEED_BAR_HEIGHT);
-    lv_obj_set_style_bg_opa(g_dashboard.speed_bar_mask, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_clip_corner(g_dashboard.speed_bar_mask, true, 0);
-
-    g_dashboard.speed_bar_gradient = lv_obj_create(g_dashboard.speed_bar_mask);
-    lv_obj_remove_style_all(g_dashboard.speed_bar_gradient);
-    lv_obj_set_pos(g_dashboard.speed_bar_gradient, 0, 0);
-    lv_obj_set_size(g_dashboard.speed_bar_gradient, SPEED_BAR_WIDTH, SPEED_BAR_HEIGHT);
-    lv_obj_set_style_bg_color(g_dashboard.speed_bar_gradient, lv_color_hex(0x2FD45A), 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.speed_bar_gradient, lv_color_hex(0xFF1A1A), 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.speed_bar_gradient, LV_GRAD_DIR_HOR, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.speed_bar_gradient, LV_OPA_COVER, 0);
-
     g_dashboard.lap_best_label = lv_label_create(top_area);
     lv_label_set_text(g_dashboard.lap_best_label, "Best");
     lv_obj_set_style_text_color(g_dashboard.lap_best_label, UI_TEXT_COLOR, 0);
@@ -711,7 +767,7 @@ void Dashboard_UI_Init(void)
     lv_obj_set_pos(g_dashboard.lap_best_label, 16, 16);
 
     g_dashboard.lap_best_value = lv_label_create(top_area);
-    lv_label_set_text(g_dashboard.lap_best_value, "1:31.80");
+    lv_label_set_text(g_dashboard.lap_best_value, "0:00.00");
     lv_obj_set_style_text_color(g_dashboard.lap_best_value, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.lap_best_value, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.lap_best_value, 76, 16);
@@ -723,7 +779,7 @@ void Dashboard_UI_Init(void)
     lv_obj_set_pos(g_dashboard.lap_last_label, 164, 16);
 
     g_dashboard.lap_last_value = lv_label_create(top_area);
-    lv_label_set_text(g_dashboard.lap_last_value, "1:32.70");
+    lv_label_set_text(g_dashboard.lap_last_value, "0:00.00");
     lv_obj_set_style_text_color(g_dashboard.lap_last_value, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.lap_last_value, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.lap_last_value, 214, 16);
@@ -735,7 +791,7 @@ void Dashboard_UI_Init(void)
     lv_obj_set_pos(g_dashboard.lap_current_label, 316, 16);
 
     g_dashboard.lap_current_value = lv_label_create(top_area);
-    lv_label_set_text(g_dashboard.lap_current_value, "1:33.40");
+    lv_label_set_text(g_dashboard.lap_current_value, "0:00.00");
     lv_obj_set_style_text_color(g_dashboard.lap_current_value, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.lap_current_value, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.lap_current_value, 364, 16);
@@ -780,7 +836,7 @@ void Dashboard_UI_Init(void)
     lv_obj_set_style_bg_opa(g_dashboard.delta_bar_center, LV_OPA_COVER, 0);
 
     g_dashboard.delta_value = lv_label_create(top_area);
-    lv_label_set_text(g_dashboard.delta_value, "+1.60s");
+    lv_label_set_text(g_dashboard.delta_value, "+0.00s");
     lv_obj_set_style_text_color(g_dashboard.delta_value, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.delta_value, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.delta_value, 526, 15);
@@ -788,11 +844,11 @@ void Dashboard_UI_Init(void)
     g_dashboard.laps_current_label = lv_label_create(top_area);
     lv_label_set_text(g_dashboard.laps_current_label, "Lap");
     lv_obj_set_style_text_color(g_dashboard.laps_current_label, UI_TEXT_COLOR, 0);
-    lv_obj_set_style_text_font(g_dashboard.laps_current_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(g_dashboard.laps_current_label, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.laps_current_label, 628, 16);
 
     g_dashboard.laps_current_value = lv_label_create(top_area);
-    lv_label_set_text(g_dashboard.laps_current_value, "02");
+    lv_label_set_text(g_dashboard.laps_current_value, "00");
     lv_obj_set_style_text_color(g_dashboard.laps_current_value, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.laps_current_value, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.laps_current_value, 664, 16);
@@ -800,11 +856,11 @@ void Dashboard_UI_Init(void)
     g_dashboard.laps_left_label = lv_label_create(top_area);
     lv_label_set_text(g_dashboard.laps_left_label, "Left");
     lv_obj_set_style_text_color(g_dashboard.laps_left_label, UI_TEXT_COLOR, 0);
-    lv_obj_set_style_text_font(g_dashboard.laps_left_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(g_dashboard.laps_left_label, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.laps_left_label, 704, 16);
 
     g_dashboard.laps_left_value = lv_label_create(top_area);
-    lv_label_set_text(g_dashboard.laps_left_value, "06");
+    lv_label_set_text(g_dashboard.laps_left_value, "00");
     lv_obj_set_style_text_color(g_dashboard.laps_left_value, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.laps_left_value, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.laps_left_value, 748, 16);
@@ -836,7 +892,7 @@ void Dashboard_UI_Init(void)
     g_dashboard.soc_value = lv_label_create(mode_box);
     lv_label_set_text(g_dashboard.soc_value, "24%");
     lv_obj_set_style_text_color(g_dashboard.soc_value, UI_TEXT_COLOR, 0);
-    lv_obj_set_style_text_font(g_dashboard.soc_value, DASHBOARD_FONT_MEDIUM, 0);
+    lv_obj_set_style_text_font(g_dashboard.soc_value, &lv_font_montserrat_16, 0);
     lv_obj_set_pos(g_dashboard.soc_value, 86, 18);
 
     lv_obj_t * power_live_label = lv_label_create(mode_box);
@@ -944,8 +1000,6 @@ void Dashboard_UI_Init(void)
     lv_obj_t * speed_box = create_panel(middle_panel, UI_CENTER_PANEL_X, 72, UI_CENTER_PANEL_WIDTH, 210, UI_BG_COLOR, LV_OPA_COVER);
     lv_obj_set_style_border_width(speed_box, 0, 0);
 
-    lv_obj_move_foreground(g_dashboard.speed_bar_mask);
-
     create_speed_digits(speed_box);
 
     lv_obj_t * speed_unit = lv_label_create(speed_box);
@@ -968,6 +1022,7 @@ void Dashboard_UI_Init(void)
     g_dashboard.lightning_fl = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_fl, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_fl, lv_color_hex(0xFFD400), 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_fl, DASHBOARD_FONT_LARGE, 0);
     lv_obj_align_to(g_dashboard.lightning_fl, g_dashboard.wheel_fl, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
 
     g_dashboard.wheel_fr = create_panel(vehicle_box, 126, 160, 24, 54, UI_BG_COLOR, LV_OPA_TRANSP);
@@ -975,6 +1030,7 @@ void Dashboard_UI_Init(void)
     g_dashboard.lightning_fr = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_fr, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_fr, lv_color_hex(0xFFD400), 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_fr, DASHBOARD_FONT_LARGE, 0);
     lv_obj_align_to(g_dashboard.lightning_fr, g_dashboard.wheel_fr, LV_ALIGN_OUT_LEFT_MID, 0, 0);
 
     g_dashboard.wheel_rl = create_panel(vehicle_box, 30, 228, 24, 54, UI_BG_COLOR, LV_OPA_TRANSP);
@@ -982,6 +1038,7 @@ void Dashboard_UI_Init(void)
     g_dashboard.lightning_rl = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_rl, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_rl, lv_color_hex(0xFFD400), 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_rl, DASHBOARD_FONT_LARGE, 0);
     lv_obj_align_to(g_dashboard.lightning_rl, g_dashboard.wheel_rl, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
 
     g_dashboard.wheel_rr = create_panel(vehicle_box, 126, 228, 24, 54, UI_BG_COLOR, LV_OPA_TRANSP);
@@ -989,6 +1046,7 @@ void Dashboard_UI_Init(void)
     g_dashboard.lightning_rr = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_rr, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_rr, lv_color_hex(0xFFD400), 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_rr, DASHBOARD_FONT_LARGE, 0);
     lv_obj_align_to(g_dashboard.lightning_rr, g_dashboard.wheel_rr, LV_ALIGN_OUT_LEFT_MID, 0, 0);
 
     apply_vehicle_ui();
@@ -1005,12 +1063,12 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_fl_torque, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_fl_torque, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fl_torque, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fl_torque, 56, 10);
+    lv_obj_set_pos(g_dashboard.motor_fl_torque, 68, 10);
     g_dashboard.motor_fl_speed = lv_label_create(bottom_info);
     lv_label_set_text(g_dashboard.motor_fl_speed, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_fl_speed, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fl_speed, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fl_speed, 56, 30);
+    lv_obj_set_pos(g_dashboard.motor_fl_speed, 68, 30);
 
     lv_obj_t * motor_fl_speed_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_fl_speed_label, "LF N:");
@@ -1027,7 +1085,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_fl_power_live, "10");
     lv_obj_set_style_text_color(g_dashboard.motor_fl_power_live, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fl_power_live, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fl_power_live, 126, 10);
+    lv_obj_set_pos(g_dashboard.motor_fl_power_live, 140, 10);
 
     lv_obj_t * motor_fl_peak_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_fl_peak_label, "Pk:");
@@ -1038,7 +1096,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_fl_power_peak, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_fl_power_peak, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fl_power_peak, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fl_power_peak, 136, 30);
+    lv_obj_set_pos(g_dashboard.motor_fl_power_peak, 150, 30);
 
     lv_obj_t * motor_fl_temp_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_fl_temp_label, "Tm:");
@@ -1049,7 +1107,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_fl_temp, "48");
     lv_obj_set_style_text_color(g_dashboard.motor_fl_temp, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fl_temp, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fl_temp, 56, 50);
+    lv_obj_set_pos(g_dashboard.motor_fl_temp, 68, 50);
 
     lv_obj_t * motor_fr_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_fr_label, "RF T:");
@@ -1060,12 +1118,12 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_fr_torque, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_fr_torque, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fr_torque, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fr_torque, 256, 10);
+    lv_obj_set_pos(g_dashboard.motor_fr_torque, 268, 10);
     g_dashboard.motor_fr_speed = lv_label_create(bottom_info);
     lv_label_set_text(g_dashboard.motor_fr_speed, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_fr_speed, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fr_speed, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fr_speed, 256, 30);
+    lv_obj_set_pos(g_dashboard.motor_fr_speed, 268, 30);
 
     lv_obj_t * motor_fr_speed_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_fr_speed_label, "RF N:");
@@ -1082,7 +1140,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_fr_power_live, "10");
     lv_obj_set_style_text_color(g_dashboard.motor_fr_power_live, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fr_power_live, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fr_power_live, 326, 10);
+    lv_obj_set_pos(g_dashboard.motor_fr_power_live, 340, 10);
 
     lv_obj_t * motor_fr_peak_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_fr_peak_label, "Pk:");
@@ -1093,7 +1151,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_fr_power_peak, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_fr_power_peak, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fr_power_peak, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fr_power_peak, 336, 30);
+    lv_obj_set_pos(g_dashboard.motor_fr_power_peak, 350, 30);
 
     lv_obj_t * motor_fr_temp_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_fr_temp_label, "Tm:");
@@ -1104,7 +1162,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_fr_temp, "47");
     lv_obj_set_style_text_color(g_dashboard.motor_fr_temp, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_fr_temp, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_fr_temp, 256, 50);
+    lv_obj_set_pos(g_dashboard.motor_fr_temp, 268, 50);
 
     lv_obj_t * motor_rl_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_rl_label, "LR T:");
@@ -1115,12 +1173,12 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_rl_torque, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_rl_torque, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rl_torque, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rl_torque, 456, 10);
+    lv_obj_set_pos(g_dashboard.motor_rl_torque, 468, 10);
     g_dashboard.motor_rl_speed = lv_label_create(bottom_info);
     lv_label_set_text(g_dashboard.motor_rl_speed, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_rl_speed, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rl_speed, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rl_speed, 456, 30);
+    lv_obj_set_pos(g_dashboard.motor_rl_speed, 468, 30);
 
     lv_obj_t * motor_rl_speed_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_rl_speed_label, "LR N:");
@@ -1137,7 +1195,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_rl_power_live, "9");
     lv_obj_set_style_text_color(g_dashboard.motor_rl_power_live, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rl_power_live, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rl_power_live, 526, 10);
+    lv_obj_set_pos(g_dashboard.motor_rl_power_live, 540, 10);
 
     lv_obj_t * motor_rl_peak_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_rl_peak_label, "Pk:");
@@ -1148,7 +1206,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_rl_power_peak, "23");
     lv_obj_set_style_text_color(g_dashboard.motor_rl_power_peak, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rl_power_peak, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rl_power_peak, 536, 30);
+    lv_obj_set_pos(g_dashboard.motor_rl_power_peak, 550, 30);
 
     lv_obj_t * motor_rl_temp_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_rl_temp_label, "Tm:");
@@ -1159,7 +1217,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_rl_temp, "49");
     lv_obj_set_style_text_color(g_dashboard.motor_rl_temp, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rl_temp, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rl_temp, 456, 50);
+    lv_obj_set_pos(g_dashboard.motor_rl_temp, 468, 50);
 
     lv_obj_t * motor_rr_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_rr_label, "RR T:");
@@ -1170,12 +1228,12 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_rr_torque, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_rr_torque, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rr_torque, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rr_torque, 656, 10);
+    lv_obj_set_pos(g_dashboard.motor_rr_torque, 668, 10);
     g_dashboard.motor_rr_speed = lv_label_create(bottom_info);
     lv_label_set_text(g_dashboard.motor_rr_speed, "24");
     lv_obj_set_style_text_color(g_dashboard.motor_rr_speed, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rr_speed, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rr_speed, 656, 30);
+    lv_obj_set_pos(g_dashboard.motor_rr_speed, 668, 30);
 
     lv_obj_t * motor_rr_speed_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_rr_speed_label, "RR N:");
@@ -1192,7 +1250,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_rr_power_live, "9");
     lv_obj_set_style_text_color(g_dashboard.motor_rr_power_live, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rr_power_live, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rr_power_live, 726, 10);
+    lv_obj_set_pos(g_dashboard.motor_rr_power_live, 740, 10);
 
     lv_obj_t * motor_rr_peak_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_rr_peak_label, "Pk:");
@@ -1203,7 +1261,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_rr_power_peak, "23");
     lv_obj_set_style_text_color(g_dashboard.motor_rr_power_peak, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rr_power_peak, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rr_power_peak, 736, 30);
+    lv_obj_set_pos(g_dashboard.motor_rr_power_peak, 750, 30);
 
     lv_obj_t * motor_rr_temp_label = lv_label_create(bottom_info);
     lv_label_set_text(motor_rr_temp_label, "Tm:");
@@ -1214,7 +1272,7 @@ void Dashboard_UI_Init(void)
     lv_label_set_text(g_dashboard.motor_rr_temp, "50");
     lv_obj_set_style_text_color(g_dashboard.motor_rr_temp, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.motor_rr_temp, DASHBOARD_FONT_SMALL, 0);
-    lv_obj_set_pos(g_dashboard.motor_rr_temp, 656, 50);
+    lv_obj_set_pos(g_dashboard.motor_rr_temp, 668, 50);
 
     for(uint32_t separator_index = 1; separator_index < 4; separator_index++) {
         lv_obj_t * motor_separator = lv_obj_create(bottom_info);
@@ -1239,6 +1297,56 @@ void Dashboard_UI_Init(void)
     lv_obj_set_size(separator_bottom, SIM_HOR_RES, 1);
     lv_obj_set_style_bg_color(separator_bottom, UI_BORDER_COLOR, 0);
     lv_obj_set_style_bg_opa(separator_bottom, LV_OPA_COVER, 0);
+
+    lv_obj_t * separator_value_top = lv_obj_create(screen);
+    lv_obj_remove_style_all(separator_value_top);
+    lv_obj_set_pos(separator_value_top, UI_CENTER_PANEL_X, UI_MIDDLE_Y + 72);
+    lv_obj_set_size(separator_value_top, UI_CENTER_PANEL_WIDTH, 1);
+    lv_obj_set_style_bg_color(separator_value_top, UI_BORDER_COLOR, 0);
+    lv_obj_set_style_bg_opa(separator_value_top, LV_OPA_COVER, 0);
+
+    {
+        static const int bar_heights[4] = {12, 24, 36, 48};
+        const lv_coord_t bar_w = 8;
+        const lv_coord_t bar_gap = 2;
+        const lv_coord_t total_w = (lv_coord_t)(4 * bar_w + 3 * bar_gap);
+        const lv_coord_t bar_x = UI_RIGHT_PANEL_X - total_w - 2;
+        const lv_coord_t bar_base_y = (lv_coord_t)(UI_TOP_HEIGHT + 1 + 72 - 2);
+        const lv_color_t grey  = { 0x55, 0x55, 0x55 };
+
+        for(uint32_t i = 0U; i < 4U; i++) {
+            g_dashboard.signal_bars[i] = lv_obj_create(screen);
+            lv_obj_set_pos(g_dashboard.signal_bars[i],
+                (lv_coord_t)(bar_x + i * (bar_w + bar_gap)),
+                (lv_coord_t)(bar_base_y - bar_heights[i]));
+            lv_obj_set_size(g_dashboard.signal_bars[i], bar_w, (lv_coord_t)bar_heights[i]);
+            lv_obj_set_style_border_width(g_dashboard.signal_bars[i], 0, 0);
+            lv_obj_set_style_pad_all(g_dashboard.signal_bars[i], 0, 0);
+            lv_obj_set_style_radius(g_dashboard.signal_bars[i], 0, 0);
+            lv_obj_set_style_bg_color(g_dashboard.signal_bars[i], grey, 0);
+            lv_obj_set_style_bg_opa(g_dashboard.signal_bars[i], LV_OPA_COVER, 0);
+        }
+    }
+
+    {
+        const lv_coord_t circle_d = 24;
+        const lv_coord_t circle_x = UI_CENTER_PANEL_X + 12;
+        const lv_coord_t circle_y = (lv_coord_t)(UI_MIDDLE_Y + 1 + (72 - circle_d) / 2);
+        g_dashboard.alert_circle = lv_obj_create(screen);
+        lv_obj_set_pos(g_dashboard.alert_circle, circle_x, circle_y);
+        lv_obj_set_size(g_dashboard.alert_circle, circle_d, circle_d);
+        lv_obj_set_style_border_width(g_dashboard.alert_circle, 0, 0);
+        lv_obj_set_style_pad_all(g_dashboard.alert_circle, 0, 0);
+        lv_obj_set_style_radius(g_dashboard.alert_circle, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(g_dashboard.alert_circle, lv_color_make(0xFF, 0x1A, 0x1A), 0);
+        lv_obj_set_style_bg_opa(g_dashboard.alert_circle, LV_OPA_COVER, 0);
+
+        g_dashboard.odometer_label = lv_label_create(screen);
+        lv_obj_set_pos(g_dashboard.odometer_label, circle_x + circle_d + 12, circle_y - 3);
+        lv_obj_set_style_text_color(g_dashboard.odometer_label, UI_TEXT_COLOR, 0);
+        lv_obj_set_style_text_font(g_dashboard.odometer_label, DASHBOARD_FONT_SMALL, 0);
+        lv_label_set_text(g_dashboard.odometer_label, "41.2 km");
+    }
 
     lv_obj_t * speed_left_separator = lv_obj_create(screen);
     lv_obj_remove_style_all(speed_left_separator);

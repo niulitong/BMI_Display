@@ -22,6 +22,7 @@
 #include "can.h"
 #include "dma.h"
 #include "fatfs.h"
+#include "i2c.h"
 #include "rtc.h"
 #include "spi.h"
 #include "usart.h"
@@ -54,7 +55,7 @@
 
 /* USER CODE BEGIN PV */
 static lv_display_t * g_lvgl_display;
-static uint16_t g_lvgl_draw_buf[480 * 20];
+static uint16_t g_lvgl_draw_buf[800 * 10];
 volatile uint32_t g_lvgl_flush_count;
 
 /* USER CODE END PV */
@@ -111,8 +112,8 @@ static void BoardBringup_MinimalLoop(void)
 }
 #endif
 
-#define LCD_HOR_RES 480
-#define LCD_VER_RES 272
+#define LCD_HOR_RES 800
+#define LCD_VER_RES 480
 
 // 1. 基础读写宏 (保持 A17 逻辑)
 #define LCD_REG  *(__IO uint16_t *)(0x60000000)
@@ -229,78 +230,72 @@ void LVGL_Port_Init(void)
 
 // 2. 商家标准的 SSD1963 初始化序列
 void SSD1963_Init(void) {
-    // 等待屏幕上电稳定
-  HAL_Delay(10);
+    HAL_Delay(10);
 
     LCD_REG = 0x01;
     HAL_Delay(10);
 
-    // --- PLL 配置 ---
     LCD_REG = 0xE2;
-    LCD_DATA = 0x23; // N=35
+    LCD_DATA = 0x1D; // N=29
     LCD_DATA = 0x02; // M=2
-    LCD_DATA = 0x04; // 验证标志
+    LCD_DATA = 0x04;
 
     LCD_REG = 0xE0;
-    LCD_DATA = 0x01; // 开启 PLL
+    LCD_DATA = 0x01;
     HAL_Delay(10);
     LCD_REG = 0xE0;
-    LCD_DATA = 0x03; // 切换到 PLL 输出
+    LCD_DATA = 0x03;
     HAL_Delay(12);
 
-    LCD_REG = 0x01;  // 软件复位
+    LCD_REG = 0x01;
     HAL_Delay(10);
 
-    // --- 像素频率设置 ---
     LCD_REG = 0xE6;
-    LCD_DATA = 0x00;
+    LCD_DATA = 0x03;
     LCD_DATA = 0xFF;
-    LCD_DATA = 0xBE;
+    LCD_DATA = 0xFF;
 
-    // --- LCD 模式与分辨率设置 ---
     LCD_REG = 0xB0;
-    LCD_DATA = 0x20; // 24-bit 模式
-    LCD_DATA = 0x00; // TFT 模式
-    LCD_DATA = (480-1)>>8; // 水平像素
+    LCD_DATA = 0x20;
+    LCD_DATA = 0x00;
+    LCD_DATA = (800-1)>>8;
+    LCD_DATA = 800-1;
+    LCD_DATA = (480-1)>>8;
     LCD_DATA = 480-1;
-    LCD_DATA = (272-1)>>8; // 垂直像素
-    LCD_DATA = 272-1;
-    LCD_DATA = 0x00; // RGB 序列
+    LCD_DATA = 0x00;
 
-    // --- 时序 Porch 设置 (依据 lcd.h 定义) ---
-    LCD_REG = 0xB4; // 水平周期
-    LCD_DATA = (532-1)>>8; // HT = 480+43+8+1 = 532
-    LCD_DATA = 532-1;
-    LCD_DATA = 43>>8;      // HPS = Back Porch
-    LCD_DATA = 43;
-    LCD_DATA = 1-1;       // HPW = 1
+    LCD_REG = 0xB4;
+    LCD_DATA = (1056-1)>>8;
+    LCD_DATA = 1056-1;
+    LCD_DATA = 46>>8;
+    LCD_DATA = 46;
+    LCD_DATA = 1-1;
     LCD_DATA = 0x00; LCD_DATA = 0x00; LCD_DATA = 0x00;
 
-    LCD_REG = 0xB6; // 垂直周期
-    LCD_DATA = (293-1)>>8; // VT = 272+12+8+1 = 293
-    LCD_DATA = 293-1;
-    LCD_DATA = 12>>8;      // VPS = Back Porch
-    LCD_DATA = 12;
-    LCD_DATA = 1-1;       // VPW = 1
+    LCD_REG = 0xB6;
+    LCD_DATA = (525-1)>>8;
+    LCD_DATA = 525-1;
+    LCD_DATA = 23>>8;
+    LCD_DATA = 23;
+    LCD_DATA = 22-1;
     LCD_DATA = 0x00; LCD_DATA = 0x00;
 
-    LCD_REG = 0xF0; // 接口设置
-    LCD_DATA = 0x03; // 16-bit(565 format)
+    LCD_REG = 0xF0;
+    LCD_DATA = 0x03;
 
-    LCD_REG = 0x29; // 开启显示
-  HAL_Delay(10);
+    LCD_REG = 0x29;
+    HAL_Delay(10);
 
-    // --- PWM 和背光设置 ---
-    LCD_REG = 0xD0; // 设置自动亮度控制DBC
-    LCD_DATA = 0x00; // disable DBC
+    LCD_REG = 0xD0;
+    LCD_DATA = 0x00;
 
-    LCD_REG = 0xBE; // 配置PWM输出
-    LCD_DATA = 0x05; // 1 设置PWM频率
-    LCD_DATA = 0xFF; // PWM占空比 (最大亮度)
-    LCD_DATA = 0x01; // PWM由主机控制
-    LCD_DATA = 0x00; // PWM极性
-    LCD_DATA = 0x00; // DBC手动亮度
-    LCD_DATA = 0x00; // DBC最小亮度
+    LCD_REG = 0xBE;
+    LCD_DATA = 0x05;
+    LCD_DATA = 0xFE;
+    LCD_DATA = 0x01;
+    LCD_DATA = 0x00;
+    LCD_DATA = 0x00;
+    LCD_DATA = 0x00;
 }
 
 // 3. 读取 ID 测试函数 (用于诊断)
@@ -362,6 +357,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
   MX_FATFS_Init();
+  MX_I2C1_Init();
   MX_FSMC_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */

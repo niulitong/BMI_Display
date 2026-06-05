@@ -2,43 +2,121 @@
 
 #include "main.h"
 
-#include "dashboard_ui.h"
-#include "spi.h"
-
 #include "FreeRTOS.h"
 #include "task.h"
 
-#if BOARD_BRINGUP_MINIMAL
+#if TOUCH_TYPE_CAP
+#include "gt911.h"
+#else
+#include "spi.h"
+#endif
+#include "dashboard_ui.h"
 
-void Touch_ServiceTask(void *argument)
+#define TOUCH_HOR_RES 800U
+#define TOUCH_VER_RES 480U
+
+#if TOUCH_TYPE_CAP
+
+static volatile uint8_t g_touch_task_alive;
+static volatile uint16_t g_touch_state_x;
+static volatile uint16_t g_touch_state_y;
+static volatile uint8_t g_touch_state_pressed;
+static volatile uint8_t g_touch_state_changed;
+
+uint8_t Touch_Cap_Init(void)
 {
-    (void)argument;
-    for(;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    if(GT911_Init() != 0U) {
+        return 0U;
     }
+    return 1U;
+}
+
+uint8_t Touch_Cap_Scan(void)
+{
+    uint8_t pressed;
+
+    if(GT911_Scan() == 0U) {
+        return 0U;
+    }
+
+    pressed = (uint8_t)((g_gt911_dev.sta & GT911_TP_PRES_DOWN) ? 1U : 0U);
+
+    if(pressed != 0U) {
+        uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        g_touch_state_x = g_gt911_dev.x[0];
+        g_touch_state_y = g_gt911_dev.y[0];
+        g_touch_state_pressed = pressed;
+        g_touch_state_changed = 1U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+    } else {
+        uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        if(g_touch_state_pressed != 0U) {
+            g_touch_state_changed = 1U;
+        }
+        g_touch_state_pressed = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+    }
+
+    return 1U;
 }
 
 void Touch_Process(void)
 {
+    uint16_t x;
+    uint16_t y;
+    uint8_t pressed;
+    uint8_t changed;
+    uint32_t primask;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    x = g_touch_state_x;
+    y = g_touch_state_y;
+    pressed = g_touch_state_pressed;
+    changed = g_touch_state_changed;
+    g_touch_state_changed = 0U;
+    if(primask == 0U) {
+        __enable_irq();
+    }
+
+    if((pressed != 0U) || (changed != 0U)) {
+        Dashboard_UI_SubmitTouchState(x, y, pressed);
+    }
 }
 
-uint8_t Touch_Driver_ReadPoint(uint16_t *x, uint16_t *y)
+void Touch_ServiceTask(void *argument)
 {
-    (void)x;
-    (void)y;
-    return 0U;
-}
+    uint32_t last_debug_tick = 0U;
 
-uint8_t Touch_Xpt2046ReadPoint(uint16_t *x, uint16_t *y)
-{
-    (void)x;
-    (void)y;
-    return 0U;
-}
+    (void)argument;
 
-uint8_t Touch_Xpt2046Init(void)
-{
-    return 0U;
+    if(Touch_Cap_Init() == 0U) {
+        HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
+        for(uint32_t i = 0U; i < 6U; i++) {
+            HAL_GPIO_TogglePin(GPIOD, LED_RED_Pin);
+            HAL_Delay(200);
+        }
+        vTaskDelete(NULL);
+    }
+
+    for(;;) {
+        g_touch_task_alive ^= 1U;
+        Touch_Cap_Scan();
+
+        if((HAL_GetTick() - last_debug_tick) >= 100U) {
+            last_debug_tick = HAL_GetTick();
+            HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin,
+                              g_touch_task_alive ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
 }
 
 #else
@@ -67,8 +145,6 @@ uint8_t Touch_Xpt2046Init(void)
 #define TOUCH_INVERT_Y 0U
 #endif
 
-#define TOUCH_HOR_RES 480U
-#define TOUCH_VER_RES 272U
 #define TOUCH_SAMPLE_COUNT 5U
 #define TOUCH_SAMPLE_DROP 1U
 #define TOUCH_ERR_RANGE 50U
@@ -281,7 +357,6 @@ void Touch_ServiceTask(void *argument)
     (void)argument;
 
     if(Touch_Xpt2046Init() != 0U) {
-        /* Initialization failed, exit task */
         vTaskDelete(NULL);
     }
 
