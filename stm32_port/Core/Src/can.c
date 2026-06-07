@@ -33,37 +33,42 @@ uint32_t CAN1_ID = 0x102;
 static uint8_t g_can_heartbeat_counter;
 CAN_RxHeaderTypeDef RxHeader;
 uint8_t CAN_RxData[8] = { 0 };
+/* DBC Vehicle_CanB.dbc filter ID list */
+/* Bank0: BMS(0x401,非DBC), DataLogger(0x305 BO_773), Debug2_Torque(0x502 BO_1282), Debug5_Velocity(0x505 BO_1285) */
 uint16_t CAN1_RX_MSG_ID_BANK0[4] = {0x401, 0x305, 0x502, 0x505};
+/* Bank1: Debug6_MotorTemp(0x506 BO_1286), Debug9_Status(0x509 BO_1289), Debug8_IGBT(0x508 BO_1288), Debug7_Inverter(0x507 BO_1287) */
 uint16_t CAN1_RX_MSG_ID_BANK1[4] = {0x506, 0x509, 0x508, 0x507};
+/* Bank2: Debug3_Diag12(0x503 BO_1283), Debug4_Diag34(0x504 BO_1284) */
 uint16_t CAN1_RX_MSG_ID_BANK2[4] = {0x503, 0x504, 0x503, 0x504};
+/* Bank3: IMU_Raw(0x50 BO_80) -> FIFO1 */
 uint16_t CAN1_RX_MSG_ID_BANK3[4] = {0x050, 0x050, 0x050, 0x050};
 static dashboard_data_t g_can_dashboard_data = {
-  .speed = 24,
-  .soc = 24,
-  .mode_index = 0,
-  .torque = {24, 24, 24, 24},
-  .motor_enable = {1, 1, 1, 1},
-  .rpm = {24, 24, 24, 24},
-  .sum_voltage = 24,
-  .sum_current = 24,
-  .max_temperature = 24,
-  .motor_temp = {48, 47, 49, 50},
-  .aps_open_pct = 0,
-  .steering_angle = 0,
-  .oil_pressure = 0,
-  .igbt_temp = {0, 0, 0, 0},
-  .inverter_temp = {0, 0, 0, 0},
-  .diag_num = {0, 0, 0, 0},
-  .imu_accel = {0, 0, 0},
-  .imu_gyro = {0, 0, 0},
-  .imu_roll = 0,
-  .imu_pitch = 0,
-  .imu_yaw = 0,
-  .imu_mag = {0, 0, 0},
-  .signal_level = 0,
-  .alert_active = 1,
-  .odometer_tenths = 412,
-  .brake_pct = 10,
+  .speed = 24,             /* DBC BO_769 GPS_Speed: GroundSpeed */
+  .soc = 24,               /* BMS(非DBC总线) */
+  .mode_index = 0,         /* DBC BO_1289 Debug9: ModeFlag [-8,7] */
+  .torque = {24, 24, 24, 24},     /* DBC BO_1282 Debug2: ActualTorque (1,0) */
+  .motor_enable = {1, 1, 1, 1},   /* DBC BO_1289 Debug9: AMK_bEnable */
+  .rpm = {24, 24, 24, 24},        /* DBC BO_1285 Debug5: ActualVelocity (1,0) */
+  .sum_voltage = 24,        /* BMS(非DBC总线) */
+  .sum_current = 24,        /* BMS(非DBC总线) */
+  .max_temperature = 24,    /* BMS(非DBC总线) */
+  .motor_temp = {48, 47, 49, 50},  /* DBC BO_1286 Debug6: Motor_temperature (0.1,0) degC */
+  .aps_open_pct = 0,        /* DBC BO_773 DataLogger: APS_OpenPct (0.1,0) % */
+  .steering_angle = 0,      /* DBC BO_773 DataLogger: SteeringWheelAngle (0.1,0) deg */
+  .oil_pressure = 0,        /* DBC BO_773 DataLogger: OilPressure_Kpa (0.001,0) Kpa, raw count */
+  .igbt_temp = {0, 0, 0, 0},       /* DBC BO_1288 Debug8: IGBT_temperature (0.1,0) degC */
+  .inverter_temp = {0, 0, 0, 0},   /* DBC BO_1287 Debug7: Inverter_temperature (0.1,0) degC */
+  .diag_num = {0, 0, 0, 0},        /* DBC BO_1283/1284 Debug3/4: Diagnostic_number */
+  .imu_accel = {0, 0, 0},   /* DBC BO_97 IMU_Accel: raw int16, scale=0.00048828125 g */
+  .imu_gyro = {0, 0, 0},    /* DBC BO_98 IMU_Gyro: raw int16, scale=0.0610352 deg/s */
+  .imu_roll = 0,            /* DBC BO_99 IMU_Roll: raw int16, scale=0.005493 deg */
+  .imu_pitch = 0,           /* DBC BO_100 IMU_Pitch: raw int16, scale=0.005493 deg */
+  .imu_yaw = 0,             /* DBC BO_101 IMU_Yaw: raw int16, scale=0.005493 deg */
+  .imu_mag = {0, 0, 0},     /* DBC BO_102 IMU_Magnetic: raw int16, scale=1 */
+  .signal_level = 0,        /* 非DBC */
+  .alert_active = 1,        /* 非DBC */
+  .odometer_tenths = 412,   /* 非DBC: 里程 0.1km */
+  .brake_pct = 10,          /* 非DBC: 制动 0~100% */
 };
 /* USER CODE END 0 */
 
@@ -284,7 +289,7 @@ void CAN1_Filter_Config(void)
 {
 	CAN_FilterTypeDef CAN_FilterInitStructure;
 
-	/* Bank 0: BMS(0x401), DataLogger(0x305), Debug2_Torque(0x502), Debug5_Velocity(0x505) */
+	/* Bank 0: BMS(0x401,非DBC), DataLogger(0x305 BO_773), Debug2_Torque(0x502 BO_1282), Debug5_Velocity(0x505 BO_1285) */
 	CAN_FilterInitStructure.FilterActivation = ENABLE;
 	CAN_FilterInitStructure.FilterBank = 0x00;
 	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO0;
@@ -399,9 +404,17 @@ void CAN_ServiceTask(void *argument)
 }
 
 /*
- * @func: CAN1 message receive interrupt [FIFO0]
+ * @func: CAN1_Filter_Config
  * DBC: Vehicle_CanB.dbc
- * Wheel order mapping: DBC {RL,RR,FL,FR} -> Dashboard {LF,LR,RF,RR}
+ * Message-ID mapping: DBC decimal -> HEX
+ *   BO_1289 Debug9=0x509, BO_1288 Debug8=0x508, BO_1287 Debug7=0x507,
+ *   BO_1286 Debug6=0x506, BO_1285 Debug5=0x505, BO_1282 Debug2=0x502,
+ *   BO_1284 Debug4=0x504, BO_1283 Debug3=0x503,
+ *   BO_773  DataLogger=0x305, BO_769 GPS_Speed=0x301(Display->ECU),
+ *   BO_80   IMU_Raw=0x50
+ * Wheel order mapping: DBC {RL,RR,FL,FR}(0,1,2,3) -> Dashboard {LF,LR,RF,RR}(0,1,2,3)
+ *   dash[0]=LF <- DBC[2]=FL, dash[1]=LR <- DBC[0]=RL,
+ *   dash[2]=RF <- DBC[3]=FR, dash[3]=RR <- DBC[1]=RR
  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
@@ -412,7 +425,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 
 	switch(RxHeader.StdId)
 	{
-	  /* 0x401 BMS: SOC, voltage, current, temperature (original protocol, unchanged) */
+	  /* BMS 0x401 - 非DBC/VCI协议: SOC(byte6), Volt(byte0-1), Curr(byte4-5), MaxTemp(byte7) */
 	  case 0x401:
 	  {
 	    g_can_dashboard_data.soc = (int32_t)CAN_RxData[6];
@@ -422,14 +435,17 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x305 DataLogger: steering angle, APS (accelerator pedal), oil pressure */
+	  /* DBC BO_773 DataLogger 0x305: SteeringWheelAngle(0|16@1-), APS_OpenPct(16|16@1+), OilPressure_Kpa(32|16@1+) */
 	  case 0x305:
 	  {
+	    /* SG_ SteeringWheelAngle: 0|16@1- (0.1,0) deg, raw=int16*0.1 */
 	    g_can_dashboard_data.steering_angle = (int32_t)(int16_t)(CAN_RxData[0] | ((uint16_t)CAN_RxData[1] << 8));
+	    /* SG_ APS_OpenPct: 16|16@1+ (0.1,0) %, raw=uint16*0.1, store integer pct */
 	    {
 	      uint16_t aps_raw = (uint16_t)CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8);
 	      g_can_dashboard_data.aps_open_pct = (int32_t)(aps_raw / 10U);
 	    }
+	    /* SG_ OilPressure_Kpa: 32|16@1+ (0.001,0) Kpa, raw count */
 	    {
 	      uint16_t oil_raw = (uint16_t)CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8);
 	      g_can_dashboard_data.oil_pressure = (int32_t)oil_raw;
@@ -437,7 +453,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x502 Debug2: actual torque per wheel, 16-bit signed each */
+	  /* DBC BO_1282 Debug2 0x502: FR/FL/RR/RL_ActualTorque (1,0) 0.1%Mn, 16-bit signed each */
 	  case 0x502:
 	  {
 	    /* DBC order: RL(0), RR(1), FL(2), FR(3) -> Dashboard: LF(0), LR(1), RF(2), RR(3) */
@@ -450,7 +466,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x505 Debug5: actual velocity per wheel, 16-bit signed each */
+	  /* DBC BO_1285 Debug5 0x505: FR/FL/RR/RL_ActualVelocity (1,0), 16-bit signed each */
 	  case 0x505:
 	  {
 	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
@@ -462,7 +478,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x506 Debug6: motor temperature per wheel, 16-bit signed, scale=0.1 */
+	  /* DBC BO_1286 Debug6 0x506: FR/FL/RR/RL_Motor_temperature (0.1,0) degC, 16-bit signed each */
 	  case 0x506:
 	  {
 	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
@@ -474,18 +490,17 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x509 Debug9: motor status flags + ModeFlag, DLC=5 */
+	  /* DBC BO_1289 Debug9 0x509: AMK status flags + ModeFlag, DLC=5 */
 	  case 0x509:
 	  {
-	    /* Byte2 bit4~7: RL, RR, FL, FR bEnable */
-	    /* DBC order: RL_bEnable(byte2.7), RR_bEnable(byte2.6), FL_bEnable(byte2.5), FR_bEnable(byte2.4) */
-	    /* Map to Dashboard: LF=RF_en(2.5), LR=RL_en(2.7), RF=FR_en(2.4), RR=RR_en(2.6) */
+	    /* SG_ FR_AMK_bEnable(20|1), FL_AMK_bEnable(21|1), RR_AMK_bEnable(22|1), RL_AMK_bEnable(23|1) */
+	    /* DBC byte2: bit4=FR, bit5=FL, bit6=RR, bit7=RL -> Dashboard: LF=FL, LR=RL, RF=FR, RR=RR */
 	    g_can_dashboard_data.motor_enable[0] = (CAN_RxData[2] >> 5) & 0x01U;
 	    g_can_dashboard_data.motor_enable[1] = (CAN_RxData[2] >> 7) & 0x01U;
 	    g_can_dashboard_data.motor_enable[2] = (CAN_RxData[2] >> 4) & 0x01U;
 	    g_can_dashboard_data.motor_enable[3] = (CAN_RxData[2] >> 6) & 0x01U;
 
-	    /* Byte0 bit4~7: ModeFlag, signed 4-bit, range [-8, 7] */
+	    /* SG_ ModeFlag: 4|4@1- (1,0) [-8,7], signed 4-bit in byte0 high nibble */
 	    {
 	      int32_t mode_val = (int32_t)((CAN_RxData[0] >> 4) & 0x0FU);
 	      if(mode_val & 8) mode_val -= 16;
@@ -494,7 +509,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x508 Debug8: IGBT temperature per wheel, 16-bit signed, scale=0.1 */
+	  /* DBC BO_1288 Debug8 0x508: FR/FL/RR/RL_IGBT_temperature (0.1,0) degC, 16-bit signed each */
 	  case 0x508:
 	  {
 	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
@@ -506,7 +521,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x507 Debug7: Inverter temperature per wheel, 16-bit signed, scale=0.1 */
+	  /* DBC BO_1287 Debug7 0x507: FR/FL/RR/RL_Inverter_temperature (0.1,0) degC, 16-bit signed each */
 	  case 0x507:
 	  {
 	    static const uint8_t dbc_map[4] = {1U, 3U, 0U, 2U};
@@ -518,7 +533,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x504 Debug4: Diagnostic_number_3, Diagnostic_number_4, 32-bit unsigned each */
+	  /* DBC BO_1284 Debug4 0x504: Diagnostic_number_3(0|32), Diagnostic_number_4(32|32), 32-bit each */
 	  case 0x504:
 	  {
 	    g_can_dashboard_data.diag_num[2] = (uint32_t)CAN_RxData[0]
@@ -532,7 +547,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
-	  /* 0x503 Debug3: Diagnostic_number_1, Diagnostic_number_2, 32-bit unsigned each */
+	  /* DBC BO_1283 Debug3 0x503: Diagnostic_number_1(0|32), Diagnostic_number_2(32|32), 32-bit each */
 	  case 0x503:
 	  {
 	    g_can_dashboard_data.diag_num[0] = (uint32_t)CAN_RxData[0]
@@ -553,6 +568,11 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     Dashboard_UI_SubmitData(&g_can_dashboard_data);
 }
 
+/*
+ * @func: CAN_SendGPSSpeed - send GPS speed to ECU & update local display
+ * DBC BO_769 GPS_Speed 0x301: GroundSpeed (1,0) km/h, Display->ECU
+ * Speed source: GNSS module via gps.c (UM982 KSXT message)
+ */
 void CAN_SendGPSSpeed(int32_t speed_kmh)
 {
   uint8_t speed_data[8] = {0};
@@ -573,8 +593,11 @@ void CAN_SendGPSSpeed(int32_t speed_kmh)
 }
 
 /*
- * @func: CAN FIFO1 callback - IMU raw data (0x50) relay to parsed IDs (0x60~0x66)
- * DBC: Vehicle_CanB.dbc, BO_ 80 IMU_Raw -> BO_ 96~102
+ * @func: CAN FIFO1 callback - IMU raw data relay/parse
+ * DBC BO_80 IMU_Raw 0x50: IMU_Header(0|8), IMU_SubType(8|8), IMU_RawData(16|48)
+ * SubType dispatches to DBC parsed messages:
+ *   0x50=Time(BO_96), 0x51=Accel(BO_97), 0x52=Gyro(BO_98),
+ *   0x53=Angle(BO_99~101 SubCmd 1/2/3), 0x54=Magnetic(BO_102)
  */
 void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
@@ -583,52 +606,59 @@ void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
 		Error_Handler();
 	}
 
+	/* DBC: IMU_Header must be 0x55 */
 	if(RxHeader.StdId != 0x50U) return;
 	if(CAN_RxData[0] != 0x55U) return;
 
 	switch(CAN_RxData[1])
 	{
-	  case 0x50U:
+	  case 0x50U:  /* DBC IMU_SubType=0x50: Time -> relay 0x60 BO_96 */
 	    User_CAN_Send_sq(0x60, CAN_RxData);
 	    break;
-	  case 0x51U:
+	  case 0x51U:  /* DBC IMU_SubType=0x51: Accel -> relay 0x61 BO_97 */
 	  {
 	    User_CAN_Send_sq(0x61, CAN_RxData);
+	    /* DBC BO_97: IMU_AccelX(0|16), IMU_AccelY(16|16), IMU_AccelZ(32|16), raw int16 */
 	    g_can_dashboard_data.imu_accel[0] = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
 	    g_can_dashboard_data.imu_accel[1] = (int32_t)(int16_t)(CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8));
 	    g_can_dashboard_data.imu_accel[2] = (int32_t)(int16_t)(CAN_RxData[6] | ((uint16_t)CAN_RxData[7] << 8));
 	    break;
 	  }
-	  case 0x52U:
+	  case 0x52U:  /* DBC IMU_SubType=0x52: Gyro -> relay 0x62 BO_98 */
 	  {
 	    User_CAN_Send_sq(0x62, CAN_RxData);
+	    /* DBC BO_98: IMU_GyroX(0|16), IMU_GyroY(16|16), IMU_GyroZ(32|16), raw int16 */
 	    g_can_dashboard_data.imu_gyro[0] = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
 	    g_can_dashboard_data.imu_gyro[1] = (int32_t)(int16_t)(CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8));
 	    g_can_dashboard_data.imu_gyro[2] = (int32_t)(int16_t)(CAN_RxData[6] | ((uint16_t)CAN_RxData[7] << 8));
 	    break;
 	  }
-	  case 0x53U:
+	  case 0x53U:  /* DBC IMU_SubType=0x53: Angle(SubCmd) -> relay 0x63/0x64/0x65 BO_99/100/101 */
 	  {
 	    if(CAN_RxData[2] == 0x01U)
 	    {
 	      User_CAN_Send_sq(0x63, CAN_RxData);
+	      /* DBC BO_99 IMU_Roll: IMU_Angle_Roll(0|16), TODO: verify byte offset with IMU firmware */
 	      g_can_dashboard_data.imu_roll = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
 	    }
 	    else if(CAN_RxData[2] == 0x02U)
 	    {
 	      User_CAN_Send_sq(0x64, CAN_RxData);
+	      /* DBC BO_100 IMU_Pitch: IMU_Angle_Pitch(0|16), TODO: verify byte offset with IMU firmware */
 	      g_can_dashboard_data.imu_pitch = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
 	    }
 	    else if(CAN_RxData[2] == 0x03U)
 	    {
 	      User_CAN_Send_sq(0x65, CAN_RxData);
+	      /* DBC BO_101 IMU_Yaw: IMU_Angle_Yaw(0|16), TODO: verify byte offset with IMU firmware */
 	      g_can_dashboard_data.imu_yaw = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
 	    }
 	    break;
 	  }
-	  case 0x54U:
+	  case 0x54U:  /* DBC IMU_SubType=0x54: Magnetic -> relay 0x66 BO_102 */
 	  {
 	    User_CAN_Send_sq(0x66, CAN_RxData);
+	    /* DBC BO_102: IMU_MagX(0|16), IMU_MagY(16|16), IMU_MagZ(32|16), raw int16 */
 	    g_can_dashboard_data.imu_mag[0] = (int32_t)(int16_t)(CAN_RxData[2] | ((uint16_t)CAN_RxData[3] << 8));
 	    g_can_dashboard_data.imu_mag[1] = (int32_t)(int16_t)(CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8));
 	    g_can_dashboard_data.imu_mag[2] = (int32_t)(int16_t)(CAN_RxData[6] | ((uint16_t)CAN_RxData[7] << 8));

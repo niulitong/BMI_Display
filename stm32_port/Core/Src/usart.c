@@ -24,9 +24,7 @@
 
 #include <ctype.h>
 #include <string.h>
-#include "Locate.h"
-#include "can.h"
-#include "dashboard_ui.h"
+#include "gps.h"
 
 static uint8_t g_usart2_rx_byte;
 static char g_usart2_line_buf[16];
@@ -179,7 +177,7 @@ void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-  huart3.Init.BaudRate = 9600;
+  huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;

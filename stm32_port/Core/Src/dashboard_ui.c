@@ -118,6 +118,8 @@ static dashboard_data_t g_dashboard_data = {
 };
 static volatile dashboard_data_t g_pending_dashboard_data;
 static volatile uint8_t g_dashboard_data_dirty = 0U;
+static volatile int32_t g_pending_speed = 24;
+static volatile uint8_t g_speed_dirty = 0U;
 
 #define DASHBOARD_FONT_SMALL (&lv_font_montserrat_18)
 #define DASHBOARD_FONT_MEDIUM (&lv_font_montserrat_18)
@@ -478,20 +480,21 @@ static void dashboard_apply_data(void)
 {
     static char text_buf[16];
 
-    g_speed = g_dashboard_data.speed;
-    g_soc = g_dashboard_data.soc;
-    g_mode_index = g_dashboard_data.mode_index;
-    g_sum_voltage = g_dashboard_data.sum_voltage;
-    g_sum_current = g_dashboard_data.sum_current;
-    g_top_temperature = g_dashboard_data.max_temperature;
+    g_speed = g_dashboard_data.speed;                 /* DBC BO_769 GPS_Speed: GroundSpeed */
+    g_soc = g_dashboard_data.soc;                     /* BMS(非DBC总线) */
+    g_mode_index = g_dashboard_data.mode_index;       /* DBC BO_1289 Debug9: ModeFlag */
+    g_sum_voltage = g_dashboard_data.sum_voltage;     /* BMS(非DBC总线) */
+    g_sum_current = g_dashboard_data.sum_current;     /* BMS(非DBC总线) */
+    g_top_temperature = g_dashboard_data.max_temperature;  /* BMS(非DBC总线) */
     for(uint32_t index = 0; index < 4U; index++) {
-        g_torque[index] = g_dashboard_data.torque[index];
-        g_rpm[index] = g_dashboard_data.rpm[index];
+        g_torque[index] = g_dashboard_data.torque[index];    /* DBC BO_1282 Debug2: ActualTorque */
+        g_rpm[index] = g_dashboard_data.rpm[index];          /* DBC BO_1285 Debug5: ActualVelocity */
+        g_motor_temp[index] = g_dashboard_data.motor_temp[index]; /* DBC BO_1286 Debug6: Motor_temperature */
     }
-    g_motor_fl_online = g_dashboard_data.motor_enable[0] != 0U;
-    g_motor_rl_online = g_dashboard_data.motor_enable[1] != 0U;
-    g_motor_fr_online = g_dashboard_data.motor_enable[2] != 0U;
-    g_motor_rr_online = g_dashboard_data.motor_enable[3] != 0U;
+    g_motor_fl_online = g_dashboard_data.motor_enable[0] != 0U;  /* DBC BO_1289: FL_AMK_bEnable */
+    g_motor_rl_online = g_dashboard_data.motor_enable[1] != 0U;  /* DBC BO_1289: RL_AMK_bEnable */
+    g_motor_fr_online = g_dashboard_data.motor_enable[2] != 0U;  /* DBC BO_1289: FR_AMK_bEnable */
+    g_motor_rr_online = g_dashboard_data.motor_enable[3] != 0U;  /* DBC BO_1289: RR_AMK_bEnable */
 
     int32_t display_speed = g_speed;
     if(display_speed < 0) display_speed = 0;
@@ -578,10 +581,6 @@ static void dashboard_apply_data(void)
             g_motor_power_peak[i] = g_motor_power_live[i];
         }
     }
-    g_motor_temp[0] = 48 + g_speed / 8;
-    g_motor_temp[1] = 47 + g_speed / 8;
-    g_motor_temp[2] = 49 + g_speed / 7;
-    g_motor_temp[3] = 50 + g_speed / 7;
 
     lv_snprintf(text_buf, sizeof(text_buf), "%ld", (long)g_torque[0]);
     lv_label_set_text(g_dashboard.motor_fl_torque, text_buf);
@@ -632,10 +631,17 @@ static void dashboard_apply_data(void)
         lv_label_set_text(g_dashboard.motor_rr_temp, text_buf);
     }
 
-    g_tire_temp_fl = 30 + g_speed / 2;
-    g_tire_temp_fr = 36 + g_speed / 2;
-    g_tire_temp_rl = 42 + g_speed / 2;
-    g_tire_temp_rr = 48 + g_speed / 2;
+    for(uint32_t i = 0U; i < 4U; i++) {
+        int32_t mtemp = g_motor_temp[i];
+        if(mtemp < 0) mtemp = 0;
+        if(mtemp > 200) mtemp = 200;
+        switch(i) {
+            case 0: g_tire_temp_fl = mtemp; break;
+            case 1: g_tire_temp_rl = mtemp; break;
+            case 2: g_tire_temp_fr = mtemp; break;
+            case 3: g_tire_temp_rr = mtemp; break;
+        }
+    }
 
     update_signal_bars(g_dashboard_data.signal_level);
 
@@ -688,6 +694,7 @@ void Dashboard_UI_SubmitData(const dashboard_data_t * data)
         g_pending_dashboard_data.torque[index] = data->torque[index];
         g_pending_dashboard_data.motor_enable[index] = data->motor_enable[index];
         g_pending_dashboard_data.rpm[index] = data->rpm[index];
+        g_pending_dashboard_data.motor_temp[index] = data->motor_temp[index];
     }
     g_pending_dashboard_data.alert_active = data->alert_active;
     g_pending_dashboard_data.odometer_tenths = data->odometer_tenths;
@@ -702,6 +709,14 @@ void Dashboard_UI_SubmitSignalLevel(int32_t level)
     if(level > 4) level = 4;
     g_pending_dashboard_data.signal_level = level;
     g_dashboard_data_dirty = 1U;
+}
+
+void Dashboard_UI_SubmitSpeed(int32_t speed)
+{
+    if(speed < 0) speed = 0;
+    if(speed > 300) speed = 300;
+    g_pending_speed = speed;
+    g_speed_dirty = 1U;
 }
 
 void Dashboard_UI_SubmitLapDelta(int32_t delta_hundredths)
@@ -720,34 +735,54 @@ void Dashboard_UI_Process(void)
 {
     uint32_t index;
     uint32_t primask;
+    int32_t pending_speed;
 
-    if(g_dashboard_data_dirty == 0U) {
+    if((g_dashboard_data_dirty == 0U) && (g_speed_dirty == 0U)) {
         return;
     }
 
-    primask = __get_PRIMASK();
-    __disable_irq();
-    g_dashboard_data.speed = g_pending_dashboard_data.speed;
-    g_dashboard_data.soc = g_pending_dashboard_data.soc;
-    g_dashboard_data.mode_index = g_pending_dashboard_data.mode_index;
-    g_dashboard_data.sum_voltage = g_pending_dashboard_data.sum_voltage;
-    g_dashboard_data.sum_current = g_pending_dashboard_data.sum_current;
-    g_dashboard_data.max_temperature = g_pending_dashboard_data.max_temperature;
-    for(index = 0; index < 4U; index++) {
-        g_dashboard_data.torque[index] = g_pending_dashboard_data.torque[index];
-        g_dashboard_data.motor_enable[index] = g_pending_dashboard_data.motor_enable[index];
-        g_dashboard_data.rpm[index] = g_pending_dashboard_data.rpm[index];
-    }
-    g_dashboard_data.signal_level = g_pending_dashboard_data.signal_level;
-    g_dashboard_data.alert_active = g_pending_dashboard_data.alert_active;
-    g_dashboard_data.odometer_tenths = g_pending_dashboard_data.odometer_tenths;
-    g_dashboard_data.brake_pct = g_pending_dashboard_data.brake_pct;
-    g_dashboard_data_dirty = 0U;
-    if(primask == 0U) {
-        __enable_irq();
+    if(g_dashboard_data_dirty != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        g_dashboard_data.speed = g_pending_dashboard_data.speed;
+        g_dashboard_data.soc = g_pending_dashboard_data.soc;
+        g_dashboard_data.mode_index = g_pending_dashboard_data.mode_index;
+        g_dashboard_data.sum_voltage = g_pending_dashboard_data.sum_voltage;
+        g_dashboard_data.sum_current = g_pending_dashboard_data.sum_current;
+        g_dashboard_data.max_temperature = g_pending_dashboard_data.max_temperature;
+        for(index = 0; index < 4U; index++) {
+            g_dashboard_data.torque[index] = g_pending_dashboard_data.torque[index];
+            g_dashboard_data.motor_enable[index] = g_pending_dashboard_data.motor_enable[index];
+            g_dashboard_data.rpm[index] = g_pending_dashboard_data.rpm[index];
+            g_dashboard_data.motor_temp[index] = g_pending_dashboard_data.motor_temp[index];
+        }
+        g_dashboard_data.signal_level = g_pending_dashboard_data.signal_level;
+        g_dashboard_data.alert_active = g_pending_dashboard_data.alert_active;
+        g_dashboard_data.odometer_tenths = g_pending_dashboard_data.odometer_tenths;
+        g_dashboard_data.brake_pct = g_pending_dashboard_data.brake_pct;
+        g_dashboard_data_dirty = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+
+        dashboard_apply_data();
     }
 
-    dashboard_apply_data();
+    if(g_speed_dirty != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        pending_speed = g_pending_speed;
+        g_speed_dirty = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+
+        if(pending_speed < 0) pending_speed = 0;
+        if(pending_speed > 99) pending_speed = 99;
+        g_dashboard_data.speed = pending_speed;
+        g_speed = pending_speed;
+        set_speed_digits(pending_speed);
+    }
 }
 
 void Dashboard_UI_Init(void)

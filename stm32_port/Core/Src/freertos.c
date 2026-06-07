@@ -30,7 +30,7 @@
 #include "dashboard_ui.h"
 #include "../lvgl/lvgl.h"
 #include "touch.h"
-#include "Locate.h"
+#include "gps.h"
 
 extern void LCD_FillColor(uint16_t color);
 extern volatile uint32_t g_lvgl_flush_count;
@@ -114,7 +114,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
   /* creation of touchTask */
   touchTaskHandle = osThreadNew(Touch_ServiceTask, NULL, &touchTask_attributes);
-  GNSS_Init();
+  GPS_Init();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -146,6 +146,7 @@ void StartDefaultTask(void *argument)
 
     if((HAL_GetTick() - last_heartbeat_tick) >= 250U) {
       last_heartbeat_tick = HAL_GetTick();
+      HAL_GPIO_TogglePin(GPIOD, LED_GREEN_Pin);
     }
 
     if((HAL_GetTick() - last_can_heartbeat_tick) >= 500U) {

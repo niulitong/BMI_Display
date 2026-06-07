@@ -489,7 +489,7 @@ Core/Src/freertos.o: ../Core/Src/freertos.c \
  ../Core/Src/../lvgl/src/lv_api_map_v9_2.h \
  ../Core/Src/../lvgl/src/lv_api_map_v9_3.h \
  ../Core/Src/../lvgl/src/lv_api_map_v9_4.h ../Core/Inc/touch.h \
- ../Core/Inc/Locate.h
+ ../Core/Inc/gps.h
 ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h:
 ../Core/Inc/FreeRTOSConfig.h:
 ../Middlewares/Third_Party/FreeRTOS/Source/include/projdefs.h:
@@ -985,4 +985,4 @@ Core/Src/freertos.o: ../Core/Src/freertos.c \
 ../Core/Src/../lvgl/src/lv_api_map_v9_3.h:
 ../Core/Src/../lvgl/src/lv_api_map_v9_4.h:
 ../Core/Inc/touch.h:
-../Core/Inc/Locate.h:
+../Core/Inc/gps.h:
