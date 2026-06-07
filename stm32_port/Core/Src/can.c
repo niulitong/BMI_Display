@@ -379,15 +379,17 @@ void CAN1_SendHeartbeat(void)
 void CAN_RequestDriveMode(int32_t mode_index)
 {
   uint8_t mode_data[8] = {0};
+  static const uint8_t mode_code[4] = {48U, 49U, 50U, 51U};
 
   if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0U) {
     return;
   }
 
-  mode_data[0] = (uint8_t)mode_index;  // Mode index in byte 0
-  // Other bytes can be set as needed
+  if(mode_index < 0) mode_index = 0;
+  if(mode_index > 3) mode_index = 3;
+  mode_data[0] = mode_code[mode_index];
 
-  User_CAN_Send_sq(0x310, mode_data);  // Send to ID 0x310
+  User_CAN_Send_sq(0x310, mode_data);
 }
 
 void CAN_ServiceTask(void *argument)
@@ -569,27 +571,25 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 }
 
 /*
- * @func: CAN_SendGPSSpeed - send GPS speed to ECU & update local display
- * DBC BO_769 GPS_Speed 0x301: GroundSpeed (1,0) km/h, Display->ECU
+ * @func: CAN_SendGPSSpeed - send GPS speed to ECU
+ * DBC BO_769 GPS_Speed 0x301: GroundSpeed (0.1,0) km/h, Display->ECU
  * Speed source: GNSS module via gps.c (UM982 KSXT message)
  */
-void CAN_SendGPSSpeed(int32_t speed_kmh)
+void CAN_SendGPSSpeed(int32_t speed_kmh_tenths)
 {
   uint8_t speed_data[8] = {0};
 
-  if(speed_kmh < 0) speed_kmh = 0;
-  if(speed_kmh > 300) speed_kmh = 300;
+  if(speed_kmh_tenths < 0) speed_kmh_tenths = 0;
+  if(speed_kmh_tenths > 3000) speed_kmh_tenths = 3000;
 
-  speed_data[0] = (uint8_t)(speed_kmh & 0xFFU);
-  speed_data[1] = (uint8_t)((speed_kmh >> 8) & 0xFFU);
+  speed_data[0] = (uint8_t)(speed_kmh_tenths & 0xFFU);
+  speed_data[1] = (uint8_t)((speed_kmh_tenths >> 8) & 0xFFU);
 
-  g_can_dashboard_data.speed = speed_kmh;
+  g_can_dashboard_data.speed = (speed_kmh_tenths + 5) / 10;
 
   if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) > 0U) {
     User_CAN_Send_sq(0x301, speed_data);
   }
-
-  Dashboard_UI_SubmitData(&g_can_dashboard_data);
 }
 
 /*

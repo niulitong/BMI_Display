@@ -7,7 +7,7 @@
 ../Core/Src/can.c:349:6:User_CAN_Send_sq	16	static
 ../Core/Src/can.c:359:6:CAN1_SendHeartbeat	16	static
 ../Core/Src/can.c:379:6:CAN_RequestDriveMode	24	static
-../Core/Src/can.c:393:6:CAN_ServiceTask	16	static
-../Core/Src/can.c:419:6:HAL_CAN_RxFifo0MsgPendingCallback	56	static
-../Core/Src/can.c:576:6:CAN_SendGPSSpeed	24	static
+../Core/Src/can.c:395:6:CAN_ServiceTask	16	static
+../Core/Src/can.c:421:6:HAL_CAN_RxFifo0MsgPendingCallback	56	static
+../Core/Src/can.c:578:6:CAN_SendGPSSpeed	24	static
 ../Core/Src/can.c:602:6:HAL_CAN_RxFifo1MsgPendingCallback	16	static

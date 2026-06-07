@@ -120,9 +120,9 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LCD_RST_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PG4 (CTP_INT - input with pull-up, floating safe) */
+  /*Configure GPIO pin : PG4 (CTP_INT - active-low external interrupt) */
   GPIO_InitStruct.Pin = IPS_INT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(IPS_INT_GPIO_Port, &GPIO_InitStruct);
 

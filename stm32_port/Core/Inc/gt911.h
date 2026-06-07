@@ -8,7 +8,8 @@
 #define GT911_TP_PRES_DOWN  0x80
 #define GT911_TP_CATH_PRES  0x40
 
-#define GT911_I2C_ADDR      0x5DU
+#define GT911_I2C_ADDR_5D   (0x5DU << 1)
+#define GT911_I2C_ADDR_14   (0x14U << 1)
 #define GT911_READ_ADDR     0x814EU
 #define GT911_ID_ADDR       0x8140U
 

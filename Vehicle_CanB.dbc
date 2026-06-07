@@ -1,12 +1,12 @@
 VERSION ""
 
 
-NS_ : 
+NS_ :
 	NS_DESC_
 	CM_
+	VAL_
 	BA_DEF_
 	BA_
-	VAL_
 	CAT_DEF_
 	CAT_
 	FILTER
@@ -107,7 +107,10 @@ BO_ 1283 Debug3: 8 ECU
  SG_ Diagnostic_number_1 : 0|32@1+ (1,0) [0|4294967295] "" Vector__XXX
 
 BO_ 769 GPS_Speed: 2 Display
- SG_ GroundSpeed : 0|16@1+ (1,0) [0|300] "km/h" Vector__XXX
+ SG_ GroundSpeed : 0|16@1+ (0.1,0) [0|300] "km/h" Vector__XXX
+
+BO_ 784 DriveMode_Request: 8 Display
+ SG_ DriveModeCode : 0|8@1+ (1,0) [48|51] "" ECU
 
 BO_ 80 IMU_Raw: 8 Display
  SG_ IMU_Header : 0|8@1+ (1,0) [85|85] "" Vector__XXX
@@ -155,7 +158,8 @@ CM_ SG_ 1282 FR_ActualTorque "左前实际扭矩右前实际扭矩右后实际扭矩左后实际扭矩";
 CM_ SG_ 773 OilPressure_Kpa "油压信号，单位是Kpa";
 CM_ SG_ 773 APS_OpenPct "0~100%表示油门开度";
 CM_ SG_ 773 SteeringWheelAngle "方向盘转角从-137到136deg";
-CM_ SG_ 769 GroundSpeed "GPS地速 (km/h), Display->ECU";
+CM_ SG_ 769 GroundSpeed "GPS地速, 分辨率0.1km/h, Display->ECU";
+CM_ SG_ 784 DriveModeCode "Drive mode request: 48=S, 49=Q, 50=C, 51=E, Display->ECU";
 CM_ SG_ 80 IMU_Header "固定帧头 0x55";
 CM_ SG_ 80 IMU_SubType "分包类型: 0x50=时间,0x51=加速度,0x52=角速度,0x53=角度,0x54=磁场";
 CM_ SG_ 80 IMU_RawData "随SubType变化的数据载荷, 具体定义见分包报文 0x60~0x66";
@@ -166,7 +170,8 @@ CM_ SG_ 99 IMU_Angle_Roll "横滚角 deg, 分包自 0x50 SubType=0x53 SubCmd=1";
 CM_ SG_ 100 IMU_Angle_Pitch "俯仰角 deg, 分包自 0x50 SubType=0x53 SubCmd=2";
 CM_ SG_ 101 IMU_Angle_Yaw "偏航角 deg, 分包自 0x50 SubType=0x53 SubCmd=3";
 CM_ SG_ 102 IMU_MagX "X轴磁场原始值, 分包自 0x50 SubType=0x54";
-BA_DEF_  "MultiplexExtEnabled" ENUM  "No","Yes";
+VAL_ 784 DriveModeCode 48 "S" 49 "Q" 50 "C" 51 "E";
+BA_DEF_  "MultiplexExtEnabled" ENUM "No","Yes";
 BA_DEF_  "BusType" STRING ;
 BA_DEF_DEF_  "MultiplexExtEnabled" "No";
 BA_DEF_DEF_  "BusType" "CAN";

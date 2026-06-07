@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 typedef struct {
-	/* DBC BO_769 GPS_Speed: GroundSpeed (1,0) km/h, Display->ECU */
+	/* Display speed in integer km/h. CAN GPS_Speed uses 0.1 km/h raw units. */
 	int32_t speed;
 	/* BMS(非DBC总线): SOC 0~100% */
 	int32_t soc;

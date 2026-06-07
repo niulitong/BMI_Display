@@ -50,7 +50,7 @@ void User_CAN_Send_sq(uint32_t CAN_ID_NEW,uint8_t* CAN_TxData_NEW);
 void CAN1_SendHeartbeat(void);
 void CAN_ServiceTask(void *argument);
 void CAN_RequestDriveMode(int32_t mode_index);
-void CAN_SendGPSSpeed(int32_t speed_kmh);
+void CAN_SendGPSSpeed(int32_t speed_kmh_tenths);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

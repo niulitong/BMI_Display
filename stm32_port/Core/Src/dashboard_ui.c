@@ -89,7 +89,7 @@ static int32_t g_best_lap_time = 0;
 static int32_t g_lap_delta = 0;
 static int32_t g_laps_current = 0;
 static int32_t g_laps_left = 0;
-static int32_t g_vehicle_distance_m = 4120;
+static int32_t g_vehicle_distance_m = 0;
 static int32_t g_throttle_opening = 0;
 static int32_t g_brake_force = 0;
 static int32_t g_power_live = 12;
@@ -120,6 +120,11 @@ static volatile dashboard_data_t g_pending_dashboard_data;
 static volatile uint8_t g_dashboard_data_dirty = 0U;
 static volatile int32_t g_pending_speed = 24;
 static volatile uint8_t g_speed_dirty = 0U;
+static volatile int32_t g_pending_signal_level = 0;
+static volatile uint8_t g_signal_dirty = 0U;
+static volatile int32_t g_pending_lap_delta = 0;
+static volatile uint8_t g_lap_delta_dirty = 0U;
+static uint32_t g_speed_ui_last_tick = 0U;
 
 #define DASHBOARD_FONT_SMALL (&lv_font_montserrat_18)
 #define DASHBOARD_FONT_MEDIUM (&lv_font_montserrat_18)
@@ -480,7 +485,7 @@ static void dashboard_apply_data(void)
 {
     static char text_buf[16];
 
-    g_speed = g_dashboard_data.speed;                 /* DBC BO_769 GPS_Speed: GroundSpeed */
+    g_speed = g_dashboard_data.speed;                 /* Display speed: integer km/h */
     g_soc = g_dashboard_data.soc;                     /* BMS(非DBC总线) */
     g_mode_index = g_dashboard_data.mode_index;       /* DBC BO_1289 Debug9: ModeFlag */
     g_sum_voltage = g_dashboard_data.sum_voltage;     /* BMS(非DBC总线) */
@@ -501,40 +506,6 @@ static void dashboard_apply_data(void)
     if(display_speed > 99) display_speed = 99;
 
     set_speed_digits(display_speed);
-
-    g_current_lap_time = 9200 + ((99 - display_speed) * 2);
-    g_lap_delta = 500 - (display_speed * 10);
-    g_last_lap_time = g_current_lap_time - 60 + (display_speed * 2);
-    g_best_lap_time = g_current_lap_time - g_lap_delta;
-    if(g_best_lap_time < 8800) g_best_lap_time = 8800;
-    if(g_last_lap_time < 8800) g_last_lap_time = 8800;
-    g_vehicle_distance_m += display_speed + 6;
-    g_laps_current = (g_vehicle_distance_m / 1800) + 1;
-    if(g_laps_current < 1) g_laps_current = 1;
-    g_laps_left = g_soc / 12;
-    if(g_laps_left < 0) g_laps_left = 0;
-
-    if(g_dashboard.lap_current_value != NULL) {
-        format_lap_time(text_buf, sizeof(text_buf), g_current_lap_time);
-        lv_label_set_text(g_dashboard.lap_current_value, text_buf);
-    }
-    if(g_dashboard.lap_last_value != NULL) {
-        format_lap_time(text_buf, sizeof(text_buf), g_last_lap_time);
-        lv_label_set_text(g_dashboard.lap_last_value, text_buf);
-    }
-    if(g_dashboard.lap_best_value != NULL) {
-        format_lap_time(text_buf, sizeof(text_buf), g_best_lap_time);
-        lv_label_set_text(g_dashboard.lap_best_value, text_buf);
-    }
-    if(g_dashboard.laps_current_value != NULL) {
-        lv_snprintf(text_buf, sizeof(text_buf), "%02ld", (long)g_laps_current);
-        lv_label_set_text(g_dashboard.laps_current_value, text_buf);
-    }
-    if(g_dashboard.laps_left_value != NULL) {
-        lv_snprintf(text_buf, sizeof(text_buf), "%02ld", (long)g_laps_left);
-        lv_label_set_text(g_dashboard.laps_left_value, text_buf);
-    }
-    update_lap_delta_ui();
 
     lv_snprintf(text_buf, sizeof(text_buf), "%ld%%", (long)g_soc);
     lv_label_set_text(g_dashboard.soc_value, text_buf);
@@ -707,8 +678,8 @@ void Dashboard_UI_SubmitSignalLevel(int32_t level)
 {
     if(level < 0) level = 0;
     if(level > 4) level = 4;
-    g_pending_dashboard_data.signal_level = level;
-    g_dashboard_data_dirty = 1U;
+    g_pending_signal_level = level;
+    g_signal_dirty = 1U;
 }
 
 void Dashboard_UI_SubmitSpeed(int32_t speed)
@@ -723,12 +694,8 @@ void Dashboard_UI_SubmitLapDelta(int32_t delta_hundredths)
 {
     if(delta_hundredths > 500) delta_hundredths = 500;
     if(delta_hundredths < -500) delta_hundredths = -500;
-
-    g_lap_delta = delta_hundredths;
-    g_best_lap_time = g_current_lap_time - g_lap_delta;
-    if(g_best_lap_time < 0) g_best_lap_time = 0;
-
-    update_lap_delta_ui();
+    g_pending_lap_delta = delta_hundredths;
+    g_lap_delta_dirty = 1U;
 }
 
 void Dashboard_UI_Process(void)
@@ -736,8 +703,11 @@ void Dashboard_UI_Process(void)
     uint32_t index;
     uint32_t primask;
     int32_t pending_speed;
+    int32_t pending_signal_level;
+    uint32_t now;
 
-    if((g_dashboard_data_dirty == 0U) && (g_speed_dirty == 0U)) {
+    if((g_dashboard_data_dirty == 0U) && (g_speed_dirty == 0U) &&
+       (g_signal_dirty == 0U) && (g_lap_delta_dirty == 0U)) {
         return;
     }
 
@@ -769,19 +739,45 @@ void Dashboard_UI_Process(void)
     }
 
     if(g_speed_dirty != 0U) {
+        now = HAL_GetTick();
+        if((g_speed_ui_last_tick == 0U) || ((now - g_speed_ui_last_tick) >= 100U)) {
+            primask = __get_PRIMASK();
+            __disable_irq();
+            pending_speed = g_pending_speed;
+            g_speed_dirty = 0U;
+            if(primask == 0U) {
+                __enable_irq();
+            }
+
+            if(pending_speed < 0) pending_speed = 0;
+            if(pending_speed > 99) pending_speed = 99;
+            g_dashboard_data.speed = pending_speed;
+            if(pending_speed != g_speed) {
+                g_speed = pending_speed;
+                set_speed_digits(pending_speed);
+            }
+            g_speed_ui_last_tick = now;
+        }
+    }
+
+    if(g_signal_dirty != 0U) {
         primask = __get_PRIMASK();
         __disable_irq();
-        pending_speed = g_pending_speed;
-        g_speed_dirty = 0U;
+        pending_signal_level = g_pending_signal_level;
+        g_signal_dirty = 0U;
         if(primask == 0U) {
             __enable_irq();
         }
 
-        if(pending_speed < 0) pending_speed = 0;
-        if(pending_speed > 99) pending_speed = 99;
-        g_dashboard_data.speed = pending_speed;
-        g_speed = pending_speed;
-        set_speed_digits(pending_speed);
+        if(pending_signal_level < 0) pending_signal_level = 0;
+        if(pending_signal_level > 4) pending_signal_level = 4;
+        g_dashboard_data.signal_level = pending_signal_level;
+        update_signal_bars(pending_signal_level);
+    }
+
+    if(g_lap_delta_dirty != 0U) {
+        g_lap_delta_dirty = 0U;
+        (void)g_pending_lap_delta;
     }
 }
 
@@ -871,7 +867,7 @@ void Dashboard_UI_Init(void)
     lv_obj_set_style_bg_opa(g_dashboard.delta_bar_center, LV_OPA_COVER, 0);
 
     g_dashboard.delta_value = lv_label_create(top_area);
-    lv_label_set_text(g_dashboard.delta_value, "+0.00s");
+    lv_label_set_text(g_dashboard.delta_value, "0.00s");
     lv_obj_set_style_text_color(g_dashboard.delta_value, UI_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(g_dashboard.delta_value, DASHBOARD_FONT_MEDIUM, 0);
     lv_obj_set_pos(g_dashboard.delta_value, 526, 15);
@@ -1403,10 +1399,12 @@ void Dashboard_UI_Init(void)
 
 static void dashboard_toggle_mode(void)
 {
-    g_drive_mode = (g_drive_mode + 1) % 4;  // Cycle through modes
+    g_drive_mode = (drive_mode_t)(((int32_t)g_drive_mode + 1) % 4);
     g_mode_index = (int32_t)g_drive_mode;
-    CAN_RequestDriveMode(g_mode_index);  // Send mode via CAN
-    apply_vehicle_ui();  // Update UI
+    g_dashboard_data.mode_index = g_mode_index;
+    apply_drive_mode_ui();
+    apply_vehicle_ui();
+    CAN_RequestDriveMode(g_mode_index);
 }
 
 void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed)

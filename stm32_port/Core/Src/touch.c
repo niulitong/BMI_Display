@@ -14,6 +14,8 @@
 
 #define TOUCH_HOR_RES 800U
 #define TOUCH_VER_RES 480U
+#define TOUCH_INPUT_LED_PORT GPIOD
+#define TOUCH_INPUT_LED_PIN LED_RED_Pin
 
 #if TOUCH_TYPE_CAP
 
@@ -68,6 +70,7 @@ uint8_t Touch_Cap_Scan(void)
 
 void Touch_Process(void)
 {
+    static uint8_t last_reported_pressed;
     uint16_t x;
     uint16_t y;
     uint8_t pressed;
@@ -86,6 +89,10 @@ void Touch_Process(void)
     }
 
     if((pressed != 0U) || (changed != 0U)) {
+        if((pressed != 0U) && (last_reported_pressed == 0U)) {
+            HAL_GPIO_TogglePin(TOUCH_INPUT_LED_PORT, TOUCH_INPUT_LED_PIN);
+        }
+        last_reported_pressed = (pressed != 0U) ? 1U : 0U;
         Dashboard_UI_SubmitTouchState(x, y, pressed);
     }
 }
@@ -93,21 +100,42 @@ void Touch_Process(void)
 void Touch_ServiceTask(void *argument)
 {
     uint32_t last_debug_tick = 0U;
+    uint8_t init_ok;
+    uint8_t last_scan_pressed = 0U;
 
     (void)argument;
 
-    if(Touch_Cap_Init() == 0U) {
+    /* Diagnostic: touch task has started. */
+    HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
+
+    init_ok = Touch_Cap_Init();
+    if(init_ok == 0U) {
+        /* Diagnostic: GT911 init/I2C failed, keep blinking RED. */
         HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
-        for(uint32_t i = 0U; i < 6U; i++) {
+        for(;;) {
             HAL_GPIO_TogglePin(GPIOD, LED_RED_Pin);
-            HAL_Delay(200);
+            vTaskDelay(pdMS_TO_TICKS(200));
         }
-        vTaskDelete(NULL);
     }
+
+    /* Diagnostic: GT911 initialized successfully. */
+    HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
 
     for(;;) {
         g_touch_task_alive ^= 1U;
         Touch_Cap_Scan();
+
+        if((g_touch_state_pressed != 0U) && (last_scan_pressed == 0U)) {
+            HAL_GPIO_TogglePin(TOUCH_INPUT_LED_PORT, TOUCH_INPUT_LED_PIN);
+        }
+        else if((g_touch_state_pressed == 0U) &&
+                (HAL_GPIO_ReadPin(IPS_INT_GPIO_Port, IPS_INT_Pin) == GPIO_PIN_RESET)) {
+            /* Diagnostic: GT911 INT is active but scan did not produce a point. */
+            HAL_GPIO_TogglePin(TOUCH_INPUT_LED_PORT, TOUCH_INPUT_LED_PIN);
+        }
+        last_scan_pressed = (g_touch_state_pressed != 0U) ? 1U : 0U;
 
         if((HAL_GetTick() - last_debug_tick) >= 100U) {
             last_debug_tick = HAL_GetTick();
@@ -324,6 +352,7 @@ uint8_t Touch_Xpt2046Init(void)
 
 void Touch_Process(void)
 {
+    static uint8_t last_reported_pressed;
     uint16_t x;
     uint16_t y;
     uint8_t pressed;
@@ -342,6 +371,10 @@ void Touch_Process(void)
     }
 
     if((pressed != 0U) || (changed != 0U)) {
+        if((pressed != 0U) && (last_reported_pressed == 0U)) {
+            HAL_GPIO_TogglePin(TOUCH_INPUT_LED_PORT, TOUCH_INPUT_LED_PIN);
+        }
+        last_reported_pressed = (pressed != 0U) ? 1U : 0U;
         Dashboard_UI_SubmitTouchState(x, y, pressed);
     }
 }
@@ -356,7 +389,12 @@ void Touch_ServiceTask(void *argument)
 
     (void)argument;
 
+    /* Diagnostic: touch task has started. */
+    HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
+
     if(Touch_Xpt2046Init() != 0U) {
+        HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
         vTaskDelete(NULL);
     }
 

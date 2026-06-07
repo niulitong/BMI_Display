@@ -1,6 +1,7 @@
 #include "main.h"
 #include "gps.h"
 #include "gps_lap.h"
+#include "can.h"
 #include "dashboard_ui.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -136,17 +137,16 @@ static int32_t nmea_field_atoi_tenths(const char * buf, int32_t idx, int32_t * o
 	return sign * int_part;
 }
 
-static int32_t nmea_parse_speed_kmh_int(const char * buf, int32_t idx)
+static int32_t nmea_parse_speed_kmh_tenths(const char * buf, int32_t idx)
 {
 	int32_t frac;
 	int32_t int_part = nmea_field_atoi_tenths(buf, idx, &frac);
 
 	while(frac < 0) frac = -frac;
-	int32_t tenths = int_part * 10 + (frac % 10);
-	if(int_part < 0) tenths = -tenths;
+	int32_t knot_tenths = int_part * 10 + (frac % 10);
+	if(int_part < 0) knot_tenths = -knot_tenths;
 
-	int32_t kmh_tenths = (int32_t)(((int64_t)tenths * 1852 + 500) / 1000);
-	return (kmh_tenths + 5) / 10;
+	return (int32_t)(((int64_t)knot_tenths * 1852 + 500) / 1000);
 }
 
 static int32_t nmea_coord_to_fixed(const char * buf, int32_t lat_idx, int32_t dir_idx)
@@ -284,7 +284,11 @@ static void parse_GNRMC(const char * sentence)
 	nmea_get_field(sentence, 2, stat, sizeof(stat));
 	if(stat[0] != 'A') return;
 
-	int32_t speed_kmh = nmea_parse_speed_kmh_int(sentence, 7);
+	int32_t speed_kmh_tenths = nmea_parse_speed_kmh_tenths(sentence, 7);
+	if(speed_kmh_tenths < 0) speed_kmh_tenths = 0;
+	if(speed_kmh_tenths > 3000) speed_kmh_tenths = 3000;
+
+	int32_t speed_kmh = (speed_kmh_tenths + 5) / 10;
 	if(speed_kmh < 0) speed_kmh = 0;
 	if(speed_kmh > 300) speed_kmh = 300;
 
@@ -294,9 +298,8 @@ static void parse_GNRMC(const char * sentence)
 	g_gps_rmc_count++;
 	taskEXIT_CRITICAL();
 
-	/* Diagnostic: a valid RMC sentence toggles RED once. */
-	HAL_GPIO_TogglePin(GPIOD, LED_RED_Pin);
 	Dashboard_UI_SubmitSpeed(speed_kmh);
+	CAN_SendGPSSpeed(speed_kmh_tenths);
 }
 
 static void parse_GNGGA(const char * sentence)
@@ -417,9 +420,9 @@ static void GPS_TaskFunc(void * argument)
 	vTaskDelay(pdMS_TO_TICKS(500));
 	GPS_SendCmd("GPGGA 1");
 	vTaskDelay(pdMS_TO_TICKS(100));
-	GPS_SendCmd("GPRMC 1");
+	GPS_SendCmd("GPRMC 20");
 	vTaskDelay(pdMS_TO_TICKS(100));
-	GPS_SendCmd("GPGSV 1");
+	GPS_SendCmd("GPGSV 0.2");
 	vTaskDelay(pdMS_TO_TICKS(200));
 	GPS_SendCmd("SAVECONFIG");
 	vTaskDelay(pdMS_TO_TICKS(500));
