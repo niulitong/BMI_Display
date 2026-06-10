@@ -23,6 +23,5 @@ extern gt911_dev_t g_gt911_dev;
 
 uint8_t GT911_Init(void);
 uint8_t GT911_Scan(void);
-uint8_t GT911_GetTouchCount(void);
 
 #endif

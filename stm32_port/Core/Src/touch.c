@@ -14,12 +14,9 @@
 
 #define TOUCH_HOR_RES 800U
 #define TOUCH_VER_RES 480U
-#define TOUCH_INPUT_LED_PORT GPIOD
-#define TOUCH_INPUT_LED_PIN LED_RED_Pin
 
 #if TOUCH_TYPE_CAP
 
-static volatile uint8_t g_touch_task_alive;
 static volatile uint16_t g_touch_state_x;
 static volatile uint16_t g_touch_state_y;
 static volatile uint8_t g_touch_state_pressed;
@@ -28,9 +25,9 @@ static volatile uint8_t g_touch_state_changed;
 uint8_t Touch_Cap_Init(void)
 {
     if(GT911_Init() != 0U) {
-        return 0U;
+        return 1U;
     }
-    return 1U;
+    return 0U;
 }
 
 uint8_t Touch_Cap_Scan(void)
@@ -70,7 +67,6 @@ uint8_t Touch_Cap_Scan(void)
 
 void Touch_Process(void)
 {
-    static uint8_t last_reported_pressed;
     uint16_t x;
     uint16_t y;
     uint8_t pressed;
@@ -89,60 +85,23 @@ void Touch_Process(void)
     }
 
     if((pressed != 0U) || (changed != 0U)) {
-        if((pressed != 0U) && (last_reported_pressed == 0U)) {
-            HAL_GPIO_TogglePin(TOUCH_INPUT_LED_PORT, TOUCH_INPUT_LED_PIN);
-        }
-        last_reported_pressed = (pressed != 0U) ? 1U : 0U;
         Dashboard_UI_SubmitTouchState(x, y, pressed);
     }
 }
 
 void Touch_ServiceTask(void *argument)
 {
-    uint32_t last_debug_tick = 0U;
     uint8_t init_ok;
-    uint8_t last_scan_pressed = 0U;
 
     (void)argument;
 
-    /* Diagnostic: touch task has started. */
-    HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
-
     init_ok = Touch_Cap_Init();
     if(init_ok == 0U) {
-        /* Diagnostic: GT911 init/I2C failed, keep blinking RED. */
-        HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
-        for(;;) {
-            HAL_GPIO_TogglePin(GPIOD, LED_RED_Pin);
-            vTaskDelay(pdMS_TO_TICKS(200));
-        }
+        vTaskDelete(NULL);
     }
 
-    /* Diagnostic: GT911 initialized successfully. */
-    HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
-
     for(;;) {
-        g_touch_task_alive ^= 1U;
         Touch_Cap_Scan();
-
-        if((g_touch_state_pressed != 0U) && (last_scan_pressed == 0U)) {
-            HAL_GPIO_TogglePin(TOUCH_INPUT_LED_PORT, TOUCH_INPUT_LED_PIN);
-        }
-        else if((g_touch_state_pressed == 0U) &&
-                (HAL_GPIO_ReadPin(IPS_INT_GPIO_Port, IPS_INT_Pin) == GPIO_PIN_RESET)) {
-            /* Diagnostic: GT911 INT is active but scan did not produce a point. */
-            HAL_GPIO_TogglePin(TOUCH_INPUT_LED_PORT, TOUCH_INPUT_LED_PIN);
-        }
-        last_scan_pressed = (g_touch_state_pressed != 0U) ? 1U : 0U;
-
-        if((HAL_GetTick() - last_debug_tick) >= 100U) {
-            last_debug_tick = HAL_GetTick();
-            HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin,
-                              g_touch_task_alive ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        }
-
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
@@ -179,15 +138,6 @@ void Touch_ServiceTask(void *argument)
 #define TOUCH_SPI_TIMEOUT_MS 10U
 #define TOUCH_RAW_PRESS_MIN 100U
 
-#define TOUCH_DEBUG_LED_PORT GPIOD
-#define TOUCH_DEBUG_LED_PIN LED_GREEN_Pin
-
-static volatile uint8_t g_touch_task_alive;
-static volatile uint8_t g_touch_debug_has_pressure;
-static volatile uint8_t g_touch_debug_spi_error;
-static volatile uint8_t g_touch_debug_has_nonzero_raw;
-static volatile uint16_t g_touch_debug_last_z1;
-static volatile uint16_t g_touch_debug_last_z2;
 static volatile uint16_t g_touch_state_x;
 static volatile uint16_t g_touch_state_y;
 static volatile uint8_t g_touch_state_pressed;
@@ -210,11 +160,9 @@ static uint16_t Touch_ReadAdc(uint8_t command)
     uint16_t data;
 
     if(HAL_SPI_TransmitReceive(&hspi1, tx, rx, sizeof(tx), TOUCH_SPI_TIMEOUT_MS) != HAL_OK) {
-        g_touch_debug_spi_error = 1U;
         return 0U;
     }
 
-    g_touch_debug_spi_error = 0U;
     data = (uint16_t)(((uint16_t)rx[1] << 8) | rx[2]);
     return (uint16_t)(data >> 3);
 }
@@ -266,11 +214,6 @@ static uint8_t Touch_ReadRawXY(uint16_t *x, uint16_t *y)
     y_raw = Touch_ReadFiltered(TOUCH_CMD_READ_Y);
     Touch_Unselect();
 
-    g_touch_debug_last_z1 = z1_raw;
-    g_touch_debug_last_z2 = z2_raw;
-    g_touch_debug_has_nonzero_raw = (uint8_t)(((x_raw != 0U) || (y_raw != 0U) ||
-                                               (z1_raw != 0U) || (z2_raw != 0U)) ? 1U : 0U);
-
     if((x_raw < TOUCH_RAW_PRESS_MIN) || (y_raw < TOUCH_RAW_PRESS_MIN)) {
         return 0U;
     }
@@ -320,21 +263,16 @@ uint8_t Touch_Xpt2046ReadPoint(uint16_t *x, uint16_t *y)
     }
 
     if(Touch_ReadRawXY(&x1, &y1) == 0U) {
-        g_touch_debug_has_pressure = 0U;
         return 0U;
     }
 
     if(Touch_ReadRawXY(&x2, &y2) == 0U) {
-        g_touch_debug_has_pressure = 0U;
         return 0U;
     }
 
     if((Touch_AbsDiff(x1, x2) >= TOUCH_ERR_RANGE) || (Touch_AbsDiff(y1, y2) >= TOUCH_ERR_RANGE)) {
-        g_touch_debug_has_pressure = 0U;
         return 0U;
     }
-
-    g_touch_debug_has_pressure = 1U;
 
     *x = Touch_MapRaw((uint16_t)((x1 + x2) / 2U), TOUCH_RAW_X_MIN, TOUCH_RAW_X_MAX,
                       TOUCH_HOR_RES, TOUCH_INVERT_X);
@@ -352,7 +290,6 @@ uint8_t Touch_Xpt2046Init(void)
 
 void Touch_Process(void)
 {
-    static uint8_t last_reported_pressed;
     uint16_t x;
     uint16_t y;
     uint8_t pressed;
@@ -371,10 +308,6 @@ void Touch_Process(void)
     }
 
     if((pressed != 0U) || (changed != 0U)) {
-        if((pressed != 0U) && (last_reported_pressed == 0U)) {
-            HAL_GPIO_TogglePin(TOUCH_INPUT_LED_PORT, TOUCH_INPUT_LED_PIN);
-        }
-        last_reported_pressed = (pressed != 0U) ? 1U : 0U;
         Dashboard_UI_SubmitTouchState(x, y, pressed);
     }
 }
@@ -385,40 +318,15 @@ void Touch_ServiceTask(void *argument)
     uint16_t y = 0U;
     uint8_t pressed = 0U;
     uint8_t last_pressed = 0U;
-    uint32_t last_debug_tick = 0U;
 
     (void)argument;
 
-    /* Diagnostic: touch task has started. */
-    HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
-
     if(Touch_Xpt2046Init() != 0U) {
-        HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
         vTaskDelete(NULL);
     }
 
     for(;;) {
-        g_touch_task_alive ^= 1U;
         pressed = Touch_Driver_ReadPoint(&x, &y);
-
-        if((HAL_GetTick() - last_debug_tick) >= 100U) {
-            last_debug_tick = HAL_GetTick();
-            if(g_touch_debug_spi_error != 0U) {
-                HAL_GPIO_WritePin(TOUCH_DEBUG_LED_PORT, TOUCH_DEBUG_LED_PIN, GPIO_PIN_SET);
-            }
-            else if(g_touch_debug_has_pressure != 0U) {
-                HAL_GPIO_TogglePin(TOUCH_DEBUG_LED_PORT, TOUCH_DEBUG_LED_PIN);
-            }
-            else if(g_touch_debug_has_nonzero_raw != 0U) {
-                HAL_GPIO_WritePin(TOUCH_DEBUG_LED_PORT, TOUCH_DEBUG_LED_PIN,
-                                  g_touch_task_alive != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
-            }
-            else {
-                HAL_GPIO_WritePin(TOUCH_DEBUG_LED_PORT, TOUCH_DEBUG_LED_PIN,
-                                  g_touch_task_alive != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
-            }
-        }
 
         if(pressed != 0U) {
             uint32_t primask = __get_PRIMASK();

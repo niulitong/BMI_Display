@@ -8,26 +8,175 @@ extern I2C_HandleTypeDef hi2c1;
 
 #define GT911_HOR_RES  800U
 #define GT911_VER_RES  480U
-#define GT911_I2C_TIMEOUT  10U
+#define GT911_I2C_DELAY_COUNT  80U
 
 gt911_dev_t g_gt911_dev;
 static uint8_t g_gt911_i2c_addr = GT911_I2C_ADDR_5D;
 
+static void GT911_I2CDelay(void)
+{
+    for(volatile uint32_t i = 0U; i < GT911_I2C_DELAY_COUNT; i++) {
+        __NOP();
+    }
+}
+
+static void GT911_I2CSetScl(uint8_t level)
+{
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, level ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
+static void GT911_I2CSetSda(uint8_t level)
+{
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, level ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
+static uint8_t GT911_I2CGetSda(void)
+{
+    return (uint8_t)((HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_SET) ? 1U : 0U);
+}
+
+static void GT911_I2CInitPins(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    (void)HAL_I2C_DeInit(&hi2c1);
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    GT911_I2CSetScl(1U);
+    GT911_I2CSetSda(1U);
+    GT911_I2CDelay();
+}
+
+static void GT911_I2CStart(void)
+{
+    GT911_I2CSetSda(1U);
+    GT911_I2CSetScl(1U);
+    GT911_I2CDelay();
+    GT911_I2CSetSda(0U);
+    GT911_I2CDelay();
+    GT911_I2CSetScl(0U);
+    GT911_I2CDelay();
+}
+
+static void GT911_I2CStop(void)
+{
+    GT911_I2CSetScl(0U);
+    GT911_I2CSetSda(0U);
+    GT911_I2CDelay();
+    GT911_I2CSetScl(1U);
+    GT911_I2CDelay();
+    GT911_I2CSetSda(1U);
+    GT911_I2CDelay();
+}
+
+static uint8_t GT911_I2CWriteByte(uint8_t data)
+{
+    for(uint8_t i = 0U; i < 8U; i++) {
+        GT911_I2CSetSda((data & 0x80U) ? 1U : 0U);
+        data <<= 1;
+        GT911_I2CDelay();
+        GT911_I2CSetScl(1U);
+        GT911_I2CDelay();
+        GT911_I2CSetScl(0U);
+        GT911_I2CDelay();
+    }
+
+    GT911_I2CSetSda(1U);
+    GT911_I2CDelay();
+    GT911_I2CSetScl(1U);
+    GT911_I2CDelay();
+    uint8_t nack = GT911_I2CGetSda();
+    GT911_I2CSetScl(0U);
+    GT911_I2CDelay();
+    return (uint8_t)(nack == 0U ? 1U : 0U);
+}
+
+static uint8_t GT911_I2CReadByte(uint8_t ack)
+{
+    uint8_t data = 0U;
+
+    GT911_I2CSetSda(1U);
+    for(uint8_t i = 0U; i < 8U; i++) {
+        data <<= 1;
+        GT911_I2CSetScl(1U);
+        GT911_I2CDelay();
+        if(GT911_I2CGetSda() != 0U) {
+            data |= 1U;
+        }
+        GT911_I2CSetScl(0U);
+        GT911_I2CDelay();
+    }
+
+    GT911_I2CSetSda(ack ? 0U : 1U);
+    GT911_I2CDelay();
+    GT911_I2CSetScl(1U);
+    GT911_I2CDelay();
+    GT911_I2CSetScl(0U);
+    GT911_I2CSetSda(1U);
+    GT911_I2CDelay();
+
+    return data;
+}
+
 static uint8_t GT911_WriteRegister(uint16_t reg, uint8_t value)
 {
-    if(HAL_I2C_Mem_Write(&hi2c1, g_gt911_i2c_addr, reg, I2C_MEMADD_SIZE_16BIT,
-                         &value, 1U, GT911_I2C_TIMEOUT) != HAL_OK) {
+    GT911_I2CStart();
+    if(GT911_I2CWriteByte(g_gt911_i2c_addr) == 0U) {
+        GT911_I2CStop();
         return 0U;
     }
+    if(GT911_I2CWriteByte((uint8_t)(reg >> 8)) == 0U) {
+        GT911_I2CStop();
+        return 0U;
+    }
+    if(GT911_I2CWriteByte((uint8_t)reg) == 0U) {
+        GT911_I2CStop();
+        return 0U;
+    }
+    if(GT911_I2CWriteByte(value) == 0U) {
+        GT911_I2CStop();
+        return 0U;
+    }
+    GT911_I2CStop();
     return 1U;
 }
 
 static uint8_t GT911_ReadRegister(uint16_t reg, uint8_t cnt, uint8_t *data)
 {
-    if(HAL_I2C_Mem_Read(&hi2c1, g_gt911_i2c_addr, reg, I2C_MEMADD_SIZE_16BIT,
-                        data, cnt, GT911_I2C_TIMEOUT) != HAL_OK) {
+    if((data == NULL) || (cnt == 0U)) {
         return 0U;
     }
+
+    GT911_I2CStart();
+    if(GT911_I2CWriteByte(g_gt911_i2c_addr) == 0U) {
+        GT911_I2CStop();
+        return 0U;
+    }
+    if(GT911_I2CWriteByte((uint8_t)(reg >> 8)) == 0U) {
+        GT911_I2CStop();
+        return 0U;
+    }
+    if(GT911_I2CWriteByte((uint8_t)reg) == 0U) {
+        GT911_I2CStop();
+        return 0U;
+    }
+
+    GT911_I2CStart();
+    if(GT911_I2CWriteByte((uint8_t)(g_gt911_i2c_addr | 0x01U)) == 0U) {
+        GT911_I2CStop();
+        return 0U;
+    }
+
+    for(uint8_t i = 0U; i < cnt; i++) {
+        data[i] = GT911_I2CReadByte((uint8_t)(i < (uint8_t)(cnt - 1U)));
+    }
+    GT911_I2CStop();
     return 1U;
 }
 
@@ -39,7 +188,7 @@ static uint8_t GT911_TryAddress(uint8_t addr)
     if(GT911_ReadRegister(GT911_ID_ADDR, 4U, id_buf) == 0U) {
         return 0U;
     }
-    return (uint8_t)((id_buf[0] == '9') ? 1U : 0U);
+    return (uint8_t)(((id_buf[0] == '9') && (id_buf[1] == '1') && (id_buf[2] == '1')) ? 1U : 0U);
 }
 
 static void GT911_IntOut(void)
@@ -73,19 +222,33 @@ static void GT911_RstHigh(void)
 
 static void GT911_ResetForAddress(uint8_t addr)
 {
+    HAL_NVIC_DisableIRQ(EXTI4_IRQn);
+    __HAL_GPIO_EXTI_CLEAR_IT(IPS_INT_Pin);
+
     GT911_IntOut();
-    HAL_GPIO_WritePin(IPS_INT_GPIO_Port, IPS_INT_Pin,
-                      (addr == GT911_I2C_ADDR_5D) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    GT911_RstLow();
-    HAL_Delay(10);
     GT911_RstHigh();
-    HAL_Delay(60);
+    HAL_Delay(20);
+    GT911_RstLow();
+    HAL_Delay(20);
+    HAL_GPIO_WritePin(IPS_INT_GPIO_Port, IPS_INT_Pin, GPIO_PIN_RESET);
+    HAL_Delay(20);
+    HAL_GPIO_WritePin(IPS_INT_GPIO_Port, IPS_INT_Pin,
+                      (addr == GT911_I2C_ADDR_14) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_Delay(20);
+    GT911_RstHigh();
+
+    HAL_GPIO_WritePin(IPS_INT_GPIO_Port, IPS_INT_Pin, GPIO_PIN_RESET);
+    HAL_Delay(50);
     GT911_IntIn();
+    __HAL_GPIO_EXTI_CLEAR_IT(IPS_INT_Pin);
+    HAL_NVIC_EnableIRQ(EXTI4_IRQn);
     HAL_Delay(20);
 }
 
 uint8_t GT911_Init(void)
 {
+    GT911_I2CInitPins();
+
     GT911_ResetForAddress(GT911_I2C_ADDR_5D);
     if(GT911_TryAddress(GT911_I2C_ADDR_5D) != 0U) {
         return 1U;
@@ -98,20 +261,12 @@ uint8_t GT911_Init(void)
     return 0U;
 }
 
-uint8_t GT911_GetTouchCount(void)
-{
-    uint8_t count = 0U;
-    GT911_ReadRegister(GT911_READ_ADDR, 1U, &count);
-    return (uint8_t)(count & 0x0FU);
-}
-
 uint8_t GT911_Scan(void)
 {
-    uint8_t buf[42];
+    uint8_t buf[42] = {0U};
     uint8_t i;
     uint8_t res = 0U;
     uint8_t temp;
-    uint8_t tempsta;
 
     static uint8_t t = 0U;
     t++;
@@ -119,6 +274,7 @@ uint8_t GT911_Scan(void)
         if(GT911_ReadRegister(GT911_READ_ADDR, 42U, buf) == 0U) {
             return 0U;
         }
+        res = 1U;
 
         if((buf[0] & 0x80U) && ((buf[0] & 0x0FU) != 0U) && ((buf[0] & 0x0FU) < 6U)) {
             temp = 0U;
@@ -132,7 +288,6 @@ uint8_t GT911_Scan(void)
                     default: break;
                 }
             }
-            tempsta = g_gt911_dev.sta;
             g_gt911_dev.sta = temp | GT911_TP_PRES_DOWN | GT911_TP_CATH_PRES;
             g_gt911_dev.x[4] = g_gt911_dev.x[0];
             g_gt911_dev.y[4] = g_gt911_dev.y[0];
@@ -155,7 +310,6 @@ uint8_t GT911_Scan(void)
             if(g_gt911_dev.x[0] >= GT911_HOR_RES) g_gt911_dev.x[0] = GT911_HOR_RES - 1U;
             if(g_gt911_dev.y[0] >= GT911_VER_RES) g_gt911_dev.y[0] = GT911_VER_RES - 1U;
             t = 0U;
-            res = 1U;
         }
 
         if(buf[0] & 0x80U) {
