@@ -74,8 +74,14 @@ void Dashboard_UI_Process(void);
 void Dashboard_UI_SubmitData(const dashboard_data_t * data);
 void Dashboard_UI_SubmitSpeed(int32_t speed);
 void Dashboard_UI_SubmitLapDelta(int32_t delta_hundredths);
+void Dashboard_UI_SubmitLapTimes(int32_t current_hundredths,
+								 int32_t last_hundredths,
+								 int32_t best_hundredths,
+								 int32_t lap_count);
 void Dashboard_UI_SubmitSignalLevel(int32_t level);
 void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed);
+void Dashboard_UI_PushAlert(const char * text);
+const dashboard_data_t * Dashboard_UI_GetCurrentData(void);
 
 #ifdef __cplusplus
 }

@@ -29,6 +29,7 @@
 			"glob.h": "c",
 			"lvgl.h": "c"
 		},
+		"serialFlash.resetMode": "ch340x",
 	},
 	// tasks.json section
 	"tasks": {

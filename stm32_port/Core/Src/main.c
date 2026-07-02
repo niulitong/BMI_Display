@@ -24,6 +24,7 @@
 #include "fatfs.h"
 #include "i2c.h"
 #include "rtc.h"
+#include "sdio.h"
 #include "spi.h"
 #include "usart.h"
 #include "gpio.h"
@@ -33,6 +34,7 @@
 /* USER CODE BEGIN Includes */
 #include "../lvgl/lvgl.h"
 #include "dashboard_ui.h"
+#include "sd_log.h"
 
 /* USER CODE END Includes */
 
@@ -84,6 +86,7 @@ void LED_Diag_SetBootStage(uint8_t stage);
 #define MX_FATFS_Init() ((void)0)
 #define MX_FSMC_Init() ((void)0)
 #define MX_USART2_UART_Init() ((void)0)
+#define MX_SDIO_SD_Init() ((void)0)
 #define osKernelInitialize() ((void)0)
 #define MX_FREERTOS_Init() ((void)0)
 #define osKernelStart() ((void)0)
@@ -360,6 +363,7 @@ int main(void)
   MX_I2C1_Init();
   MX_FSMC_Init();
   MX_USART2_UART_Init();
+  MX_SDIO_SD_Init();
   /* USER CODE BEGIN 2 */
 #if BOARD_BRINGUP_MINIMAL
   BoardBringup_MinimalInit();
@@ -384,6 +388,7 @@ int main(void)
   LVGL_Port_Init();
   HAL_Delay(10);
   LCD_Backlight_On();
+  SD_Log_InitAndWrite(Dashboard_UI_GetCurrentData());
 #endif
   /* USER CODE END 2 */
 

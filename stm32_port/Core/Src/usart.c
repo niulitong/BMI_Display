@@ -22,7 +22,6 @@
 
 /* USER CODE BEGIN 0 */
 
-#include <ctype.h>
 #include <string.h>
 #include "gps.h"
 
@@ -40,8 +39,11 @@ static void USART2_ProcessLine(const char * line)
   char cleaned[16];
   uint8_t src_index = 0U;
   uint8_t dst_index = 0U;
-  char * end_ptr;
-  float parsed_value;
+  uint8_t idx = 1U;
+  int32_t sign;
+  int32_t whole = 0;
+  int32_t frac = 0;
+  uint8_t frac_digits = 0U;
   int32_t delta_hundredths;
 
   if(line == NULL) {
@@ -50,7 +52,7 @@ static void USART2_ProcessLine(const char * line)
 
   while((line[src_index] != '\0') && (dst_index < (uint8_t)(sizeof(cleaned) - 1U))) {
     unsigned char ch = (unsigned char)line[src_index++];
-    if((ch == '+') || (ch == '-') || (ch == '.') || isdigit(ch)) {
+    if((ch == '+') || (ch == '-') || (ch == '.') || ((ch >= '0') && (ch <= '9'))) {
       cleaned[dst_index++] = (char)ch;
     }
   }
@@ -60,12 +62,32 @@ static void USART2_ProcessLine(const char * line)
     return;
   }
 
-  parsed_value = strtof(cleaned, &end_ptr);
-  if((end_ptr == cleaned) || (*end_ptr != '\0')) {
+  sign = cleaned[0] == '-' ? -1 : 1;
+  if((cleaned[idx] < '0') || (cleaned[idx] > '9')) {
     return;
   }
+  while((cleaned[idx] >= '0') && (cleaned[idx] <= '9')) {
+    whole = (whole * 10) + (int32_t)(cleaned[idx] - '0');
+    idx++;
+  }
+  if(cleaned[idx] == '.') {
+    idx++;
+    while((cleaned[idx] >= '0') && (cleaned[idx] <= '9') && (frac_digits < 2U)) {
+      frac = (frac * 10) + (int32_t)(cleaned[idx] - '0');
+      frac_digits++;
+      idx++;
+    }
+    while((cleaned[idx] >= '0') && (cleaned[idx] <= '9')) {
+      idx++;
+    }
+  }
+  if(cleaned[idx] != '\0') return;
+  while(frac_digits < 2U) {
+    frac *= 10;
+    frac_digits++;
+  }
 
-  delta_hundredths = (int32_t)(parsed_value * 100.0f);
+  delta_hundredths = sign * ((whole * 100) + frac);
   Dashboard_UI_SubmitLapDelta(delta_hundredths);
 }
 

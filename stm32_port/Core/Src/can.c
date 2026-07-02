@@ -333,12 +333,15 @@ void CAN1_Filter_Config(void)
  */
 void User_CAN_Send()
 {
-	TxHeader.RTR = CAN_RTR_DATA;
-	TxHeader.IDE = CAN_ID_STD;
-	TxHeader.StdId = CAN1_ID;
-	TxHeader.TransmitGlobalTime = DISABLE;
-	TxHeader.DLC = 8;
-	HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData, &CAN1_TxMail);
+	CAN_TxHeaderTypeDef tx_header;
+	uint32_t tx_mailbox;
+
+	tx_header.RTR = CAN_RTR_DATA;
+	tx_header.IDE = CAN_ID_STD;
+	tx_header.StdId = CAN1_ID;
+	tx_header.TransmitGlobalTime = DISABLE;
+	tx_header.DLC = 8;
+	HAL_CAN_AddTxMessage(&hcan1, &tx_header, CAN_TxData, &tx_mailbox);
 }
 
 /*
@@ -348,12 +351,15 @@ void User_CAN_Send()
 //发送指定ID
 void User_CAN_Send_sq(uint32_t CAN_ID_NEW,uint8_t* CAN_TxData_NEW)
 {
-	TxHeader.RTR = CAN_RTR_DATA;
-	TxHeader.IDE = CAN_ID_STD;
-	TxHeader.StdId = CAN_ID_NEW;
-	TxHeader.TransmitGlobalTime = DISABLE;
-	TxHeader.DLC = 8;
-	HAL_CAN_AddTxMessage(&hcan1, &TxHeader, CAN_TxData_NEW, &CAN1_TxMail);
+	CAN_TxHeaderTypeDef tx_header;
+	uint32_t tx_mailbox;
+
+	tx_header.RTR = CAN_RTR_DATA;
+	tx_header.IDE = CAN_ID_STD;
+	tx_header.StdId = CAN_ID_NEW;
+	tx_header.TransmitGlobalTime = DISABLE;
+	tx_header.DLC = 8;
+	HAL_CAN_AddTxMessage(&hcan1, &tx_header, CAN_TxData_NEW, &tx_mailbox);
 }
 
 void CAN1_SendHeartbeat(void)
@@ -573,7 +579,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 /*
  * @func: CAN_SendGPSSpeed - send GPS speed to ECU
  * DBC BO_769 GPS_Speed 0x301: GroundSpeed (0.1,0) km/h, Display->ECU
- * Speed source: GNSS module via gps.c (UM982 KSXT message)
+ * Speed source: GNSS module via gps.c RMC message
  */
 void CAN_SendGPSSpeed(int32_t speed_kmh_tenths)
 {

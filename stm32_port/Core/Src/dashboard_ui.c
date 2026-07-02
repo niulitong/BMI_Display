@@ -5,6 +5,10 @@
 #include "../lvgl/lvgl.h"
 
 #include "can.h"
+#include "gps.h"
+#include "gps_lap.h"
+
+#include <string.h>
 
 typedef struct {
     lv_obj_t * speed_digit_container;
@@ -19,6 +23,7 @@ typedef struct {
     lv_obj_t * delta_bar_fill;
     lv_obj_t * delta_bar_center;
     lv_obj_t * delta_value;
+    lv_obj_t * mode_tile;
     lv_obj_t * mode_value;
     lv_obj_t * soc_value;
     lv_obj_t * battery_fill;
@@ -63,6 +68,7 @@ typedef struct {
     lv_obj_t * laps_left_value;
     lv_obj_t * signal_bars[4];
     lv_obj_t * alert_circle;
+    lv_obj_t * alert_label;
     lv_obj_t * odometer_label;
 } dashboard_ui_t;
 
@@ -124,7 +130,26 @@ static volatile int32_t g_pending_signal_level = 0;
 static volatile uint8_t g_signal_dirty = 0U;
 static volatile int32_t g_pending_lap_delta = 0;
 static volatile uint8_t g_lap_delta_dirty = 0U;
+static volatile int32_t g_pending_lap_current = 0;
+static volatile int32_t g_pending_lap_last = 0;
+static volatile int32_t g_pending_lap_best = 0;
+static volatile int32_t g_pending_lap_count = 0;
+static volatile uint8_t g_lap_times_dirty = 0U;
 static uint32_t g_speed_ui_last_tick = 0U;
+static uint8_t g_lap_analysis_active = 0U;
+static uint8_t g_lap_analysis_blink_visible = 0U;
+static uint8_t g_lap_analysis_indicator_visible = 0xFFU;
+static uint32_t g_lap_analysis_blink_tick = 0U;
+
+#define DASHBOARD_ALERT_MAX 6U
+#define DASHBOARD_ALERT_TEXT_MAX 32U
+static char g_alert_queue[DASHBOARD_ALERT_MAX][DASHBOARD_ALERT_TEXT_MAX];
+static uint8_t g_alert_count = 0U;
+static char g_pending_alert_queue[DASHBOARD_ALERT_MAX][DASHBOARD_ALERT_TEXT_MAX];
+static volatile uint8_t g_pending_alert_count = 0U;
+static volatile uint8_t g_pending_alert_pop_count = 0U;
+static volatile uint8_t g_pending_lap_toggle = 0U;
+static volatile uint8_t g_pending_mode_toggle = 0U;
 
 #define DASHBOARD_FONT_SMALL (&lv_font_montserrat_18)
 #define DASHBOARD_FONT_MEDIUM (&lv_font_montserrat_18)
@@ -168,6 +193,16 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define MODE_TOUCH_X_MAX UI_LEFT_PANEL_WIDTH
 #define MODE_TOUCH_Y_MIN UI_MIDDLE_Y
 #define MODE_TOUCH_Y_MAX (UI_MIDDLE_Y + UI_MIDDLE_HEIGHT)
+
+#define LAP_TOUCH_X_MIN 0
+#define LAP_TOUCH_X_MAX SIM_HOR_RES
+#define LAP_TOUCH_Y_MIN 0
+#define LAP_TOUCH_Y_MAX UI_TOP_HEIGHT
+
+#define ALERT_TOUCH_X_MIN 322
+#define ALERT_TOUCH_X_MAX 580
+#define ALERT_TOUCH_Y_MIN UI_MIDDLE_Y
+#define ALERT_TOUCH_Y_MAX (UI_MIDDLE_Y + 72)
 
 #define DELTA_BAR_X 430
 #define DELTA_BAR_Y 17
@@ -234,6 +269,9 @@ static lv_obj_t * create_segment(lv_obj_t * parent, lv_coord_t x, lv_coord_t y, 
     lv_obj_set_style_bg_opa(segment, LV_OPA_40, 0);
     return segment;
 }
+
+static void update_lap_delta_ui(void);
+static void dashboard_toggle_mode(void);
 
 static void set_speed_digit_segment_state(lv_obj_t * segment, bool enabled)
 {
@@ -314,6 +352,176 @@ static void format_lap_time(char * buf, size_t buf_size, int32_t hundredths)
     lv_snprintf(buf, buf_size, "%ld:%02ld.%02ld", (long)minutes, (long)seconds, (long)centiseconds);
 }
 
+static void update_alert_ui(void)
+{
+    char alert_buf[48];
+
+    if(g_dashboard.alert_label == NULL) {
+        return;
+    }
+
+    if(g_alert_count == 0U) {
+        lv_label_set_text(g_dashboard.alert_label, "");
+        lv_obj_add_flag(g_dashboard.alert_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_snprintf(alert_buf, sizeof(alert_buf), "%u %s", (unsigned)g_alert_count, g_alert_queue[0]);
+    lv_label_set_text(g_dashboard.alert_label, alert_buf);
+    lv_obj_clear_flag(g_dashboard.alert_label, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void dashboard_push_alert_local(const char * text)
+{
+    uint32_t text_len;
+
+    if((text == NULL) || (text[0] == '\0')) {
+        return;
+    }
+
+    for(uint32_t index = 0U; index < g_alert_count; index++) {
+        if(strncmp(g_alert_queue[index], text, DASHBOARD_ALERT_TEXT_MAX) == 0) {
+            update_alert_ui();
+            return;
+        }
+    }
+
+    if(g_alert_count >= DASHBOARD_ALERT_MAX) {
+        for(uint32_t index = 1U; index < DASHBOARD_ALERT_MAX; index++) {
+            (void)strncpy(g_alert_queue[index - 1U], g_alert_queue[index], DASHBOARD_ALERT_TEXT_MAX);
+            g_alert_queue[index - 1U][DASHBOARD_ALERT_TEXT_MAX - 1U] = '\0';
+        }
+        g_alert_count = DASHBOARD_ALERT_MAX - 1U;
+    }
+
+    text_len = strlen(text);
+    if(text_len >= DASHBOARD_ALERT_TEXT_MAX) {
+        text_len = DASHBOARD_ALERT_TEXT_MAX - 1U;
+    }
+    (void)memcpy(g_alert_queue[g_alert_count], text, text_len);
+    g_alert_queue[g_alert_count][text_len] = '\0';
+    g_alert_count++;
+    update_alert_ui();
+}
+
+static void dashboard_pop_alert(void)
+{
+    if(g_alert_count == 0U) {
+        update_alert_ui();
+        return;
+    }
+
+    for(uint32_t index = 1U; index < g_alert_count; index++) {
+        (void)strncpy(g_alert_queue[index - 1U], g_alert_queue[index], DASHBOARD_ALERT_TEXT_MAX);
+        g_alert_queue[index - 1U][DASHBOARD_ALERT_TEXT_MAX - 1U] = '\0';
+    }
+
+    g_alert_count--;
+    if(g_alert_count < DASHBOARD_ALERT_MAX) {
+        g_alert_queue[g_alert_count][0] = '\0';
+    }
+    update_alert_ui();
+}
+
+static void dashboard_reset_lap_ui(void)
+{
+    char buf[16];
+
+    g_current_lap_time = 0;
+    g_last_lap_time = 0;
+    g_best_lap_time = 0;
+    g_lap_delta = 0;
+    g_laps_current = 0;
+    g_laps_left = 0;
+
+    format_lap_time(buf, sizeof(buf), g_best_lap_time);
+    lv_label_set_text(g_dashboard.lap_best_value, buf);
+    format_lap_time(buf, sizeof(buf), g_last_lap_time);
+    lv_label_set_text(g_dashboard.lap_last_value, buf);
+    format_lap_time(buf, sizeof(buf), g_current_lap_time);
+    lv_label_set_text(g_dashboard.lap_current_value, buf);
+    lv_label_set_text(g_dashboard.laps_current_value, "00");
+    lv_label_set_text(g_dashboard.laps_left_value, "00");
+    update_lap_delta_ui();
+}
+
+static void update_lap_analysis_indicator(uint32_t now)
+{
+    if(g_dashboard.alert_circle == NULL) {
+        return;
+    }
+
+    if(g_lap_analysis_active == 0U) {
+        g_lap_analysis_blink_visible = 0U;
+        if(g_lap_analysis_indicator_visible != 0U) {
+            lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
+            g_lap_analysis_indicator_visible = 0U;
+        }
+        return;
+    }
+
+    if((g_lap_analysis_blink_tick == 0U) || ((now - g_lap_analysis_blink_tick) >= 500U)) {
+        g_lap_analysis_blink_tick = now;
+        g_lap_analysis_blink_visible = (g_lap_analysis_blink_visible == 0U) ? 1U : 0U;
+    }
+
+    if(g_lap_analysis_indicator_visible == g_lap_analysis_blink_visible) {
+        return;
+    }
+
+    g_lap_analysis_indicator_visible = g_lap_analysis_blink_visible;
+    if(g_lap_analysis_indicator_visible != 0U) {
+        lv_obj_clear_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
+    }
+    else {
+        lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void dashboard_toggle_lap_analysis(void)
+{
+	GPS_Data_t gps_data;
+	float line_heading;
+
+    if(g_lap_analysis_active != 0U) {
+        g_lap_analysis_active = 0U;
+        g_lap_analysis_blink_visible = 0U;
+        GPS_Lap_SetAnalysisActive(0U);
+        update_lap_analysis_indicator(HAL_GetTick());
+        return;
+    }
+
+    GPS_GetData(&gps_data);
+	if(gps_data.valid == 0U) {
+		Dashboard_UI_PushAlert("gps not fixed");
+		return;
+	}
+    if(gps_data.signal_level <= GPS_SIG_LEVEL_NONE) {
+        Dashboard_UI_PushAlert("gps no signal");
+        return;
+    }
+	line_heading = gps_data.heading_valid != 0U ?
+				   gps_data.heading_angle : gps_data.track_angle;
+
+    GPS_Lap_Reset();
+    GPS_Lap_SetStartLine(gps_data.latitude,
+                         gps_data.longitude,
+                         line_heading);
+    GPS_Lap_SetFinishLine(gps_data.latitude,
+                          gps_data.longitude,
+                          line_heading);
+    if(GPS_Lap_StartAtCurrent(&gps_data) == 0U) {
+        Dashboard_UI_PushAlert("gps position invalid");
+        return;
+    }
+    dashboard_reset_lap_ui();
+    g_lap_analysis_active = 1U;
+    g_lap_analysis_blink_visible = 1U;
+    g_lap_analysis_blink_tick = HAL_GetTick();
+    GPS_Lap_SetAnalysisActive(1U);
+    update_lap_analysis_indicator(g_lap_analysis_blink_tick);
+}
+
 static void update_lap_delta_ui(void)
 {
     char delta_buf[16];
@@ -365,27 +573,39 @@ static void update_lap_delta_ui(void)
 
 static void apply_drive_mode_ui(void)
 {
+    const char * mode_text = "S";
+    lv_color_t tile_color = lv_palette_main(LV_PALETTE_RED);
+    lv_color_t text_color = lv_color_hex(0xFFFFFF);
+
     switch(g_drive_mode) {
         case DRIVE_MODE_S:
-            lv_label_set_text(g_dashboard.mode_value, "S");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_RED), 0);
+            mode_text = "S";
+            tile_color = lv_palette_main(LV_PALETTE_RED);
             break;
         case DRIVE_MODE_Q:
-            lv_label_set_text(g_dashboard.mode_value, "Q");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_color_hex(0xFFD400), 0);
+            mode_text = "Q";
+            tile_color = lv_color_hex(0xFFD400);
             break;
         case DRIVE_MODE_C:
-            lv_label_set_text(g_dashboard.mode_value, "C");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_BLUE), 0);
+            mode_text = "C";
+            tile_color = lv_palette_main(LV_PALETTE_BLUE);
             break;
         case DRIVE_MODE_E:
-            lv_label_set_text(g_dashboard.mode_value, "E");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_GREEN), 0);
+            mode_text = "E";
+            tile_color = lv_palette_main(LV_PALETTE_GREEN);
             break;
         default:
-            lv_label_set_text(g_dashboard.mode_value, "S");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_RED), 0);
+            mode_text = "S";
+            tile_color = lv_palette_main(LV_PALETTE_RED);
             break;
+    }
+
+    if(g_dashboard.mode_tile != NULL) {
+        lv_obj_set_style_bg_color(g_dashboard.mode_tile, tile_color, 0);
+    }
+    if(g_dashboard.mode_value != NULL) {
+        lv_label_set_text(g_dashboard.mode_value, mode_text);
+        lv_obj_set_style_text_color(g_dashboard.mode_value, text_color, 0);
     }
 }
 
@@ -617,24 +837,6 @@ static void dashboard_apply_data(void)
     update_signal_bars(g_dashboard_data.signal_level);
 
     {
-        static int alert_flash_counter = 0;
-        static uint8_t alert_visible = 0U;
-        alert_flash_counter++;
-        if(g_dashboard_data.alert_active != 0U) {
-            if((alert_flash_counter % 30) == 0) {
-                alert_visible = (alert_visible == 0U) ? 1U : 0U;
-            }
-            if(alert_visible != 0U) {
-                lv_obj_remove_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
-            }
-        } else {
-            lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-
-    {
         int32_t odo_tenths = g_dashboard_data.odometer_tenths;
         int32_t odo_int = odo_tenths / 10;
         int32_t odo_frac = odo_tenths % 10;
@@ -686,6 +888,9 @@ void Dashboard_UI_SubmitSpeed(int32_t speed)
 {
     if(speed < 0) speed = 0;
     if(speed > 300) speed = 300;
+    if((g_speed_dirty != 0U) && (g_pending_speed == speed)) {
+        return;
+    }
     g_pending_speed = speed;
     g_speed_dirty = 1U;
 }
@@ -698,17 +903,143 @@ void Dashboard_UI_SubmitLapDelta(int32_t delta_hundredths)
     g_lap_delta_dirty = 1U;
 }
 
+void Dashboard_UI_SubmitLapTimes(int32_t current_hundredths,
+								 int32_t last_hundredths,
+								 int32_t best_hundredths,
+								 int32_t lap_count)
+{
+	g_pending_lap_current = current_hundredths;
+	g_pending_lap_last = last_hundredths;
+	g_pending_lap_best = best_hundredths;
+	g_pending_lap_count = lap_count;
+	g_lap_times_dirty = 1U;
+}
+
+void Dashboard_UI_PushAlert(const char * text)
+{
+    uint32_t primask;
+    uint32_t text_len;
+
+    if((text == NULL) || (text[0] == '\0')) {
+        return;
+    }
+
+    text_len = strlen(text);
+    if(text_len >= DASHBOARD_ALERT_TEXT_MAX) {
+        text_len = DASHBOARD_ALERT_TEXT_MAX - 1U;
+    }
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    if(g_pending_alert_count >= DASHBOARD_ALERT_MAX) {
+        for(uint32_t index = 1U; index < DASHBOARD_ALERT_MAX; index++) {
+            (void)memcpy(g_pending_alert_queue[index - 1U],
+                         g_pending_alert_queue[index],
+                         DASHBOARD_ALERT_TEXT_MAX);
+        }
+        g_pending_alert_count = DASHBOARD_ALERT_MAX - 1U;
+    }
+    (void)memcpy(g_pending_alert_queue[g_pending_alert_count], text, text_len);
+    g_pending_alert_queue[g_pending_alert_count][text_len] = '\0';
+    g_pending_alert_count++;
+    if(primask == 0U) {
+        __enable_irq();
+    }
+}
+
 void Dashboard_UI_Process(void)
 {
     uint32_t index;
     uint32_t primask;
     int32_t pending_speed;
     int32_t pending_signal_level;
+    char pending_alert_queue[DASHBOARD_ALERT_MAX][DASHBOARD_ALERT_TEXT_MAX];
+    char pending_alert_text[DASHBOARD_ALERT_TEXT_MAX];
+    uint8_t pending_alert_count;
     uint32_t now;
 
-    if((g_dashboard_data_dirty == 0U) && (g_speed_dirty == 0U) &&
-       (g_signal_dirty == 0U) && (g_lap_delta_dirty == 0U)) {
+    now = HAL_GetTick();
+    update_lap_analysis_indicator(now);
+
+	if((g_dashboard_data_dirty == 0U) && (g_speed_dirty == 0U) &&
+	   (g_signal_dirty == 0U) && (g_lap_delta_dirty == 0U) &&
+	   (g_lap_times_dirty == 0U) &&
+	   (g_pending_alert_count == 0U) && (g_pending_alert_pop_count == 0U) &&
+	   (g_pending_lap_toggle == 0U) && (g_pending_mode_toggle == 0U)) {
         return;
+    }
+
+    if(g_pending_mode_toggle != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        g_pending_mode_toggle = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+
+        dashboard_toggle_mode();
+    }
+
+    if(g_signal_dirty != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        pending_signal_level = g_pending_signal_level;
+        g_signal_dirty = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+
+        if(pending_signal_level < 0) pending_signal_level = 0;
+        if(pending_signal_level > 4) pending_signal_level = 4;
+        g_dashboard_data.signal_level = pending_signal_level;
+        update_signal_bars(pending_signal_level);
+    }
+
+    if(g_pending_lap_toggle != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        g_pending_lap_toggle = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+
+        dashboard_toggle_lap_analysis();
+    }
+
+    while(g_pending_alert_pop_count != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        g_pending_alert_pop_count--;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+
+        dashboard_pop_alert();
+    }
+
+    if(g_pending_alert_count != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        pending_alert_count = g_pending_alert_count;
+        if(pending_alert_count > DASHBOARD_ALERT_MAX) {
+            pending_alert_count = DASHBOARD_ALERT_MAX;
+        }
+        for(uint32_t alert_index = 0U; alert_index < pending_alert_count; alert_index++) {
+            (void)memcpy(pending_alert_queue[alert_index],
+                         g_pending_alert_queue[alert_index],
+                         DASHBOARD_ALERT_TEXT_MAX);
+            pending_alert_queue[alert_index][DASHBOARD_ALERT_TEXT_MAX - 1U] = '\0';
+        }
+        g_pending_alert_count = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+
+        for(uint32_t alert_index = 0U; alert_index < pending_alert_count; alert_index++) {
+            (void)strncpy(pending_alert_text, pending_alert_queue[alert_index], sizeof(pending_alert_text));
+            pending_alert_text[sizeof(pending_alert_text) - 1U] = '\0';
+            dashboard_push_alert_local(pending_alert_text);
+        }
     }
 
     if(g_dashboard_data_dirty != 0U) {
@@ -726,7 +1057,6 @@ void Dashboard_UI_Process(void)
             g_dashboard_data.rpm[index] = g_pending_dashboard_data.rpm[index];
             g_dashboard_data.motor_temp[index] = g_pending_dashboard_data.motor_temp[index];
         }
-        g_dashboard_data.signal_level = g_pending_dashboard_data.signal_level;
         g_dashboard_data.alert_active = g_pending_dashboard_data.alert_active;
         g_dashboard_data.odometer_tenths = g_pending_dashboard_data.odometer_tenths;
         g_dashboard_data.brake_pct = g_pending_dashboard_data.brake_pct;
@@ -739,7 +1069,6 @@ void Dashboard_UI_Process(void)
     }
 
     if(g_speed_dirty != 0U) {
-        now = HAL_GetTick();
         if((g_speed_ui_last_tick == 0U) || ((now - g_speed_ui_last_tick) >= 100U)) {
             primask = __get_PRIMASK();
             __disable_irq();
@@ -760,24 +1089,29 @@ void Dashboard_UI_Process(void)
         }
     }
 
-    if(g_signal_dirty != 0U) {
-        primask = __get_PRIMASK();
-        __disable_irq();
-        pending_signal_level = g_pending_signal_level;
-        g_signal_dirty = 0U;
-        if(primask == 0U) {
-            __enable_irq();
-        }
-
-        if(pending_signal_level < 0) pending_signal_level = 0;
-        if(pending_signal_level > 4) pending_signal_level = 4;
-        g_dashboard_data.signal_level = pending_signal_level;
-        update_signal_bars(pending_signal_level);
-    }
-
     if(g_lap_delta_dirty != 0U) {
         g_lap_delta_dirty = 0U;
-        (void)g_pending_lap_delta;
+        g_lap_delta = g_pending_lap_delta;
+        update_lap_delta_ui();
+    }
+
+    if(g_lap_times_dirty != 0U) {
+        char lap_buf[16];
+
+        g_lap_times_dirty = 0U;
+        g_current_lap_time = g_pending_lap_current;
+        g_last_lap_time = g_pending_lap_last;
+        g_best_lap_time = g_pending_lap_best;
+        g_laps_current = g_pending_lap_count;
+
+        format_lap_time(lap_buf, sizeof(lap_buf), g_best_lap_time);
+        lv_label_set_text(g_dashboard.lap_best_value, lap_buf);
+        format_lap_time(lap_buf, sizeof(lap_buf), g_last_lap_time);
+        lv_label_set_text(g_dashboard.lap_last_value, lap_buf);
+        format_lap_time(lap_buf, sizeof(lap_buf), g_current_lap_time);
+        lv_label_set_text(g_dashboard.lap_current_value, lap_buf);
+        lv_snprintf(lap_buf, sizeof(lap_buf), "%02ld", (long)g_laps_current);
+        lv_label_set_text(g_dashboard.laps_current_value, lap_buf);
     }
 }
 
@@ -1043,9 +1377,13 @@ void Dashboard_UI_Init(void)
     lv_obj_t * vehicle_box = create_panel(middle_panel, 0, 0, UI_LEFT_PANEL_WIDTH, UI_MIDDLE_HEIGHT - 9, UI_BG_COLOR, LV_OPA_COVER);
     lv_obj_set_style_border_width(vehicle_box, 0, 0);
 
-    g_dashboard.mode_value = lv_label_create(vehicle_box);
+    g_dashboard.mode_tile = create_panel(vehicle_box, 52, 10, 76, 76, lv_palette_main(LV_PALETTE_RED), LV_OPA_COVER);
+    lv_obj_set_style_border_width(g_dashboard.mode_tile, 2, 0);
+    lv_obj_set_style_radius(g_dashboard.mode_tile, 0, 0);
+
+    g_dashboard.mode_value = lv_label_create(g_dashboard.mode_tile);
     lv_obj_set_style_text_font(g_dashboard.mode_value, DASHBOARD_FONT_LARGE, 0);
-    lv_obj_align(g_dashboard.mode_value, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_align(g_dashboard.mode_value, LV_ALIGN_CENTER, 0, 0);
     apply_drive_mode_ui();
 
     g_dashboard.wheel_fl = create_panel(vehicle_box, 30, 160, 24, 54, UI_BG_COLOR, LV_OPA_TRANSP);
@@ -1371,12 +1709,23 @@ void Dashboard_UI_Init(void)
         lv_obj_set_style_radius(g_dashboard.alert_circle, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(g_dashboard.alert_circle, lv_color_make(0xFF, 0x1A, 0x1A), 0);
         lv_obj_set_style_bg_opa(g_dashboard.alert_circle, LV_OPA_COVER, 0);
+        lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
 
         g_dashboard.odometer_label = lv_label_create(screen);
         lv_obj_set_pos(g_dashboard.odometer_label, circle_x + circle_d + 12, circle_y - 3);
         lv_obj_set_style_text_color(g_dashboard.odometer_label, UI_TEXT_COLOR, 0);
         lv_obj_set_style_text_font(g_dashboard.odometer_label, DASHBOARD_FONT_SMALL, 0);
         lv_label_set_text(g_dashboard.odometer_label, "41.2 km");
+
+        g_dashboard.alert_label = lv_label_create(screen);
+        lv_obj_set_pos(g_dashboard.alert_label, ALERT_TOUCH_X_MIN, circle_y - 3);
+        lv_obj_set_size(g_dashboard.alert_label, ALERT_TOUCH_X_MAX - ALERT_TOUCH_X_MIN, circle_d + 6);
+        lv_label_set_long_mode(g_dashboard.alert_label, LV_LABEL_LONG_MODE_CLIP);
+        lv_obj_set_style_text_color(g_dashboard.alert_label, lv_palette_main(LV_PALETTE_RED), 0);
+        lv_obj_set_style_text_font(g_dashboard.alert_label, DASHBOARD_FONT_SMALL, 0);
+        lv_label_set_text(g_dashboard.alert_label, "");
+        lv_obj_add_flag(g_dashboard.alert_label, LV_OBJ_FLAG_HIDDEN);
+        update_alert_ui();
     }
 
     lv_obj_t * speed_left_separator = lv_obj_create(screen);
@@ -1411,15 +1760,37 @@ void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed)
 {
     static uint8_t last_pressed = 0U;
     static uint32_t last_toggle_tick = 0U;
+    static uint32_t last_lap_toggle_tick = 0U;
+    static uint32_t last_alert_touch_tick = 0U;
     uint32_t now = HAL_GetTick();
     uint8_t in_mode_area = (uint8_t)((x >= MODE_TOUCH_X_MIN) && (x < MODE_TOUCH_X_MAX) &&
                                      (y >= MODE_TOUCH_Y_MIN) && (y < MODE_TOUCH_Y_MAX));
+    uint8_t in_lap_area = (uint8_t)((x >= LAP_TOUCH_X_MIN) && (x < LAP_TOUCH_X_MAX) &&
+                                    (y >= LAP_TOUCH_Y_MIN) && (y < LAP_TOUCH_Y_MAX));
+    uint8_t in_alert_area = (uint8_t)((x >= ALERT_TOUCH_X_MIN) && (x < ALERT_TOUCH_X_MAX) &&
+                                      (y >= ALERT_TOUCH_Y_MIN) && (y < ALERT_TOUCH_Y_MAX));
 
-    if ((pressed != 0U) && (last_pressed == 0U) && (in_mode_area != 0U) &&
-        ((now - last_toggle_tick) >= 200U)) {
-        last_toggle_tick = now;
-        dashboard_toggle_mode();
+    if((pressed != 0U) && (last_pressed == 0U)) {
+        if((in_lap_area != 0U) && ((now - last_lap_toggle_tick) >= 200U)) {
+            last_lap_toggle_tick = now;
+            g_pending_lap_toggle = 1U;
+        }
+        else if((in_alert_area != 0U) && ((now - last_alert_touch_tick) >= 200U)) {
+            last_alert_touch_tick = now;
+            if(g_pending_alert_pop_count < 255U) {
+                g_pending_alert_pop_count++;
+            }
+        }
+        else if((in_mode_area != 0U) && ((now - last_toggle_tick) >= 200U)) {
+            last_toggle_tick = now;
+            g_pending_mode_toggle = 1U;
+        }
     }
 
     last_pressed = pressed != 0U ? 1U : 0U;
+}
+
+const dashboard_data_t * Dashboard_UI_GetCurrentData(void)
+{
+    return &g_dashboard_data;
 }

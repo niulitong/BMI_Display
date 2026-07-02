@@ -18,11 +18,14 @@
 
 typedef struct {
 	uint8_t  valid;
-	double   latitude;
-	double   longitude;
+	float    latitude;
+	float    longitude;
 	float    altitude;
 	float    track_angle;
+	float    heading_angle;
 	float    speed_kmh;
+	uint8_t  heading_valid;
+	uint8_t  heading_quality;
 	uint8_t  fix_quality;
 	uint8_t  satellites;
 	uint8_t  signal_level;

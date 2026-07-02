@@ -31,6 +31,7 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc_ex.h \
+ ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_sd.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_spi.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h \
@@ -52,7 +53,7 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Middlewares/Third_Party/FatFs/src/ff_gen_drv.h \
  ../Middlewares/Third_Party/FatFs/src/diskio.h \
  ../Middlewares/Third_Party/FatFs/src/ff.h ../FATFS/Target/user_diskio.h \
- ../Core/Inc/i2c.h ../Core/Inc/rtc.h ../Core/Inc/spi.h \
+ ../Core/Inc/i2c.h ../Core/Inc/rtc.h ../Core/Inc/sdio.h ../Core/Inc/spi.h \
  ../Core/Inc/usart.h ../Core/Inc/gpio.h ../Core/Inc/fsmc.h \
  ../Core/Src/../lvgl/lvgl.h ../Core/Src/../lvgl/lv_version.h \
  ../Core/Src/../lvgl/src/lv_init.h \
@@ -220,44 +221,21 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../lvgl/src/widgets/animimage/lv_animimage.h \
  ../Core/Src/../lvgl/src/widgets/animimage/../image/lv_image.h \
  ../Core/Src/../lvgl/src/widgets/animimage/../image/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/animimage/../image/../../core/lv_obj.h \
- ../Core/Src/../lvgl/src/widgets/animimage/../image/../../misc/lv_fs.h \
- ../Core/Src/../lvgl/src/widgets/animimage/../image/../../draw/lv_draw.h \
- ../Core/Src/../lvgl/src/widgets/animimage/../image/../../core/lv_observer.h \
  ../Core/Src/../lvgl/src/widgets/animimage/../../misc/lv_types.h \
  ../Core/Src/../lvgl/src/widgets/arc/lv_arc.h \
  ../Core/Src/../lvgl/src/widgets/arc/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/arc/../../core/lv_obj.h \
- ../Core/Src/../lvgl/src/widgets/arc/../../core/lv_observer.h \
  ../Core/Src/../lvgl/src/widgets/arclabel/lv_arclabel.h \
  ../Core/Src/../lvgl/src/widgets/arclabel/../../lv_conf_internal.h \
  ../Core/Src/../lvgl/src/widgets/bar/lv_bar.h \
  ../Core/Src/../lvgl/src/widgets/bar/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/bar/../../core/lv_obj.h \
- ../Core/Src/../lvgl/src/widgets/bar/../../misc/lv_anim.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/lv_label.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/../../misc/lv_types.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/../../core/lv_obj.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/../../font/lv_font.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/../../font/lv_symbol_def.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/../../misc/lv_text.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/../../draw/lv_draw.h \
- ../Core/Src/../lvgl/src/widgets/bar/../label/../../core/lv_observer.h \
- ../Core/Src/../lvgl/src/widgets/bar/../../core/lv_observer.h \
  ../Core/Src/../lvgl/src/widgets/button/lv_button.h \
  ../Core/Src/../lvgl/src/widgets/button/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/button/../../core/lv_obj.h \
  ../Core/Src/../lvgl/src/widgets/buttonmatrix/lv_buttonmatrix.h \
  ../Core/Src/../lvgl/src/widgets/buttonmatrix/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/buttonmatrix/../../core/lv_obj.h \
- ../Core/Src/../lvgl/src/widgets/buttonmatrix/../../core/lv_obj_property.h \
  ../Core/Src/../lvgl/src/widgets/calendar/lv_calendar.h \
  ../Core/Src/../lvgl/src/widgets/calendar/../buttonmatrix/lv_buttonmatrix.h \
  ../Core/Src/../lvgl/src/widgets/canvas/lv_canvas.h \
  ../Core/Src/../lvgl/src/widgets/canvas/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/canvas/../image/lv_image.h \
- ../Core/Src/../lvgl/src/widgets/canvas/../../draw/lv_draw_image.h \
  ../Core/Src/../lvgl/src/widgets/chart/lv_chart.h \
  ../Core/Src/../lvgl/src/widgets/chart/../../lv_conf_internal.h \
  ../Core/Src/../lvgl/src/widgets/chart/../../core/lv_obj.h \
@@ -266,7 +244,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../lvgl/src/widgets/checkbox/../../core/lv_obj.h \
  ../Core/Src/../lvgl/src/widgets/dropdown/lv_dropdown.h \
  ../Core/Src/../lvgl/src/widgets/dropdown/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/dropdown/../label/lv_label.h \
  ../Core/Src/../lvgl/src/widgets/gif/lv_gif.h \
  ../Core/Src/../lvgl/src/widgets/gif/../../lv_conf_internal.h \
  ../Core/Src/../lvgl/src/widgets/image/lv_image.h \
@@ -275,6 +252,14 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../lvgl/src/widgets/keyboard/lv_keyboard.h \
  ../Core/Src/../lvgl/src/widgets/keyboard/../buttonmatrix/lv_buttonmatrix.h \
  ../Core/Src/../lvgl/src/widgets/label/lv_label.h \
+ ../Core/Src/../lvgl/src/widgets/label/../../lv_conf_internal.h \
+ ../Core/Src/../lvgl/src/widgets/label/../../misc/lv_types.h \
+ ../Core/Src/../lvgl/src/widgets/label/../../core/lv_obj.h \
+ ../Core/Src/../lvgl/src/widgets/label/../../font/lv_font.h \
+ ../Core/Src/../lvgl/src/widgets/label/../../font/lv_symbol_def.h \
+ ../Core/Src/../lvgl/src/widgets/label/../../misc/lv_text.h \
+ ../Core/Src/../lvgl/src/widgets/label/../../draw/lv_draw.h \
+ ../Core/Src/../lvgl/src/widgets/label/../../core/lv_observer.h \
  ../Core/Src/../lvgl/src/widgets/led/lv_led.h \
  ../Core/Src/../lvgl/src/widgets/led/../../core/lv_obj.h \
  ../Core/Src/../lvgl/src/widgets/line/lv_line.h \
@@ -292,10 +277,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../lvgl/src/widgets/roller/../../core/lv_obj.h \
  ../Core/Src/../lvgl/src/widgets/scale/lv_scale.h \
  ../Core/Src/../lvgl/src/widgets/scale/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/scale/../../core/lv_obj.h \
- ../Core/Src/../lvgl/src/widgets/scale/../line/lv_line.h \
- ../Core/Src/../lvgl/src/widgets/scale/../image/lv_image.h \
- ../Core/Src/../lvgl/src/widgets/scale/../../core/lv_observer.h \
  ../Core/Src/../lvgl/src/widgets/slider/lv_slider.h \
  ../Core/Src/../lvgl/src/widgets/slider/../bar/lv_bar.h \
  ../Core/Src/../lvgl/src/widgets/span/lv_span.h \
@@ -308,11 +289,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../lvgl/src/widgets/spinbox/../textarea/../label/lv_label.h \
  ../Core/Src/../lvgl/src/widgets/spinner/lv_spinner.h \
  ../Core/Src/../lvgl/src/widgets/spinner/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/spinner/../../misc/lv_types.h \
- ../Core/Src/../lvgl/src/widgets/spinner/../../core/lv_obj_property.h \
  ../Core/Src/../lvgl/src/widgets/switch/lv_switch.h \
  ../Core/Src/../lvgl/src/widgets/switch/../../lv_conf_internal.h \
- ../Core/Src/../lvgl/src/widgets/switch/../../core/lv_obj.h \
  ../Core/Src/../lvgl/src/widgets/table/lv_table.h \
  ../Core/Src/../lvgl/src/widgets/table/../label/lv_label.h \
  ../Core/Src/../lvgl/src/widgets/table/../../core/lv_obj_property.h \
@@ -494,7 +472,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../lvgl/src/lv_api_map_v9_1.h \
  ../Core/Src/../lvgl/src/lv_api_map_v9_2.h \
  ../Core/Src/../lvgl/src/lv_api_map_v9_3.h \
- ../Core/Src/../lvgl/src/lv_api_map_v9_4.h ../Core/Inc/dashboard_ui.h
+ ../Core/Src/../lvgl/src/lv_api_map_v9_4.h ../Core/Inc/dashboard_ui.h \
+ ../Core/Inc/sd_log.h ../Core/Inc/dashboard_ui.h
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
 ../Core/Inc/stm32f4xx_hal_conf.h:
@@ -528,6 +507,7 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr_ex.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc_ex.h:
+../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_sd.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_spi.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h:
@@ -556,6 +536,7 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../FATFS/Target/user_diskio.h:
 ../Core/Inc/i2c.h:
 ../Core/Inc/rtc.h:
+../Core/Inc/sdio.h:
 ../Core/Inc/spi.h:
 ../Core/Inc/usart.h:
 ../Core/Inc/gpio.h:
@@ -727,44 +708,21 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../lvgl/src/widgets/animimage/lv_animimage.h:
 ../Core/Src/../lvgl/src/widgets/animimage/../image/lv_image.h:
 ../Core/Src/../lvgl/src/widgets/animimage/../image/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/animimage/../image/../../core/lv_obj.h:
-../Core/Src/../lvgl/src/widgets/animimage/../image/../../misc/lv_fs.h:
-../Core/Src/../lvgl/src/widgets/animimage/../image/../../draw/lv_draw.h:
-../Core/Src/../lvgl/src/widgets/animimage/../image/../../core/lv_observer.h:
 ../Core/Src/../lvgl/src/widgets/animimage/../../misc/lv_types.h:
 ../Core/Src/../lvgl/src/widgets/arc/lv_arc.h:
 ../Core/Src/../lvgl/src/widgets/arc/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/arc/../../core/lv_obj.h:
-../Core/Src/../lvgl/src/widgets/arc/../../core/lv_observer.h:
 ../Core/Src/../lvgl/src/widgets/arclabel/lv_arclabel.h:
 ../Core/Src/../lvgl/src/widgets/arclabel/../../lv_conf_internal.h:
 ../Core/Src/../lvgl/src/widgets/bar/lv_bar.h:
 ../Core/Src/../lvgl/src/widgets/bar/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/bar/../../core/lv_obj.h:
-../Core/Src/../lvgl/src/widgets/bar/../../misc/lv_anim.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/lv_label.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/../../misc/lv_types.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/../../core/lv_obj.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/../../font/lv_font.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/../../font/lv_symbol_def.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/../../misc/lv_text.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/../../draw/lv_draw.h:
-../Core/Src/../lvgl/src/widgets/bar/../label/../../core/lv_observer.h:
-../Core/Src/../lvgl/src/widgets/bar/../../core/lv_observer.h:
 ../Core/Src/../lvgl/src/widgets/button/lv_button.h:
 ../Core/Src/../lvgl/src/widgets/button/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/button/../../core/lv_obj.h:
 ../Core/Src/../lvgl/src/widgets/buttonmatrix/lv_buttonmatrix.h:
 ../Core/Src/../lvgl/src/widgets/buttonmatrix/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/buttonmatrix/../../core/lv_obj.h:
-../Core/Src/../lvgl/src/widgets/buttonmatrix/../../core/lv_obj_property.h:
 ../Core/Src/../lvgl/src/widgets/calendar/lv_calendar.h:
 ../Core/Src/../lvgl/src/widgets/calendar/../buttonmatrix/lv_buttonmatrix.h:
 ../Core/Src/../lvgl/src/widgets/canvas/lv_canvas.h:
 ../Core/Src/../lvgl/src/widgets/canvas/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/canvas/../image/lv_image.h:
-../Core/Src/../lvgl/src/widgets/canvas/../../draw/lv_draw_image.h:
 ../Core/Src/../lvgl/src/widgets/chart/lv_chart.h:
 ../Core/Src/../lvgl/src/widgets/chart/../../lv_conf_internal.h:
 ../Core/Src/../lvgl/src/widgets/chart/../../core/lv_obj.h:
@@ -773,7 +731,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../lvgl/src/widgets/checkbox/../../core/lv_obj.h:
 ../Core/Src/../lvgl/src/widgets/dropdown/lv_dropdown.h:
 ../Core/Src/../lvgl/src/widgets/dropdown/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/dropdown/../label/lv_label.h:
 ../Core/Src/../lvgl/src/widgets/gif/lv_gif.h:
 ../Core/Src/../lvgl/src/widgets/gif/../../lv_conf_internal.h:
 ../Core/Src/../lvgl/src/widgets/image/lv_image.h:
@@ -782,6 +739,14 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../lvgl/src/widgets/keyboard/lv_keyboard.h:
 ../Core/Src/../lvgl/src/widgets/keyboard/../buttonmatrix/lv_buttonmatrix.h:
 ../Core/Src/../lvgl/src/widgets/label/lv_label.h:
+../Core/Src/../lvgl/src/widgets/label/../../lv_conf_internal.h:
+../Core/Src/../lvgl/src/widgets/label/../../misc/lv_types.h:
+../Core/Src/../lvgl/src/widgets/label/../../core/lv_obj.h:
+../Core/Src/../lvgl/src/widgets/label/../../font/lv_font.h:
+../Core/Src/../lvgl/src/widgets/label/../../font/lv_symbol_def.h:
+../Core/Src/../lvgl/src/widgets/label/../../misc/lv_text.h:
+../Core/Src/../lvgl/src/widgets/label/../../draw/lv_draw.h:
+../Core/Src/../lvgl/src/widgets/label/../../core/lv_observer.h:
 ../Core/Src/../lvgl/src/widgets/led/lv_led.h:
 ../Core/Src/../lvgl/src/widgets/led/../../core/lv_obj.h:
 ../Core/Src/../lvgl/src/widgets/line/lv_line.h:
@@ -799,10 +764,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../lvgl/src/widgets/roller/../../core/lv_obj.h:
 ../Core/Src/../lvgl/src/widgets/scale/lv_scale.h:
 ../Core/Src/../lvgl/src/widgets/scale/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/scale/../../core/lv_obj.h:
-../Core/Src/../lvgl/src/widgets/scale/../line/lv_line.h:
-../Core/Src/../lvgl/src/widgets/scale/../image/lv_image.h:
-../Core/Src/../lvgl/src/widgets/scale/../../core/lv_observer.h:
 ../Core/Src/../lvgl/src/widgets/slider/lv_slider.h:
 ../Core/Src/../lvgl/src/widgets/slider/../bar/lv_bar.h:
 ../Core/Src/../lvgl/src/widgets/span/lv_span.h:
@@ -815,11 +776,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../lvgl/src/widgets/spinbox/../textarea/../label/lv_label.h:
 ../Core/Src/../lvgl/src/widgets/spinner/lv_spinner.h:
 ../Core/Src/../lvgl/src/widgets/spinner/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/spinner/../../misc/lv_types.h:
-../Core/Src/../lvgl/src/widgets/spinner/../../core/lv_obj_property.h:
 ../Core/Src/../lvgl/src/widgets/switch/lv_switch.h:
 ../Core/Src/../lvgl/src/widgets/switch/../../lv_conf_internal.h:
-../Core/Src/../lvgl/src/widgets/switch/../../core/lv_obj.h:
 ../Core/Src/../lvgl/src/widgets/table/lv_table.h:
 ../Core/Src/../lvgl/src/widgets/table/../label/lv_label.h:
 ../Core/Src/../lvgl/src/widgets/table/../../core/lv_obj_property.h:
@@ -1002,4 +960,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../lvgl/src/lv_api_map_v9_2.h:
 ../Core/Src/../lvgl/src/lv_api_map_v9_3.h:
 ../Core/Src/../lvgl/src/lv_api_map_v9_4.h:
+../Core/Inc/dashboard_ui.h:
+../Core/Inc/sd_log.h:
 ../Core/Inc/dashboard_ui.h:
