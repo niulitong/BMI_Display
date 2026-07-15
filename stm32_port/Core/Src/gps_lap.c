@@ -21,6 +21,8 @@
 #define GPS_LAP_MAX_LINE_DISTANCE_M  20000.0f
 #define GPS_LAP_SAMPLE_MIN_DM        (-32768.0f)
 #define GPS_LAP_SAMPLE_MAX_DM        32767.0f
+#define GPS_LAP_ENABLE_GEOMETRY      0U
+#define GPS_LAP_ENABLE_LIVE_DELTA    0U
 
 typedef struct {
 	int16_t x_dm;
@@ -161,6 +163,7 @@ static GPS_LapLinePos_t project_to_line(const GPS_LapLine_t * line,
 	return pos;
 }
 
+#if GPS_LAP_ENABLE_GEOMETRY
 static uint8_t crossed_finish_line(const GPS_LapLinePos_t * prev,
 									  const GPS_LapLinePos_t * curr,
 									  float * ratio_out)
@@ -181,6 +184,7 @@ static uint8_t crossed_finish_line(const GPS_LapLinePos_t * prev,
 	*ratio_out = ratio;
 	return 1U;
 }
+#endif
 
 static int16_t clamp_dm_f32(float meter)
 {
@@ -238,6 +242,7 @@ static void add_current_sample(const GPS_LapLinePos_t * pos,
 	g_lap_last_sample_tick = tick;
 }
 
+#if GPS_LAP_ENABLE_GEOMETRY
 static void archive_current_samples(void)
 {
 	if(g_lap_current_sample_count < 2U) {
@@ -251,7 +256,9 @@ static void archive_current_samples(void)
 	g_lap_ref_sample_count = g_lap_current_sample_count;
 	g_lap_ref_valid = 1U;
 }
+#endif
 
+#if GPS_LAP_ENABLE_LIVE_DELTA
 static uint8_t interpolate_ref_time(const GPS_LapLinePos_t * pos, int32_t * time_ms_out)
 {
 	float px = pos->forward_m * 10.0f;
@@ -306,6 +313,7 @@ static void update_live_delta(const GPS_LapLinePos_t * pos, int32_t current_ms)
 	g_lap_delta_ms = current_ms - ref_ms;
 	Dashboard_UI_SubmitLapDelta(g_lap_delta_ms / 10);
 }
+#endif
 
 void GPS_Lap_SetStartLine(float lat, float lon, float track)
 {
@@ -391,14 +399,27 @@ uint8_t GPS_Lap_IsAnalysisActive(void)
 	return g_lap_analysis_enabled;
 }
 
+void GPS_Lap_Tick(void)
+{
+	uint32_t now;
+
+	if((g_lap_analysis_enabled == 0U) || (g_lap_active == 0U)) return;
+
+	now = HAL_GetTick();
+	g_lap_current_ms = (int32_t)(now - g_lap_start_tick);
+	submit_lap_times_limited(now, 0U);
+}
+
 void GPS_LapProcess(const GPS_Data_t * data)
 {
+#if GPS_LAP_ENABLE_GEOMETRY
 	GPS_LapLinePos_t curr_pos;
 	GPS_LapLinePos_t cross_pos;
-	uint32_t now;
 	float ratio;
 	uint32_t cross_tick;
 	int32_t prev_lap_ms;
+#endif
+	uint32_t now;
 
 	if(!g_start_set || !g_finish_set) return;
 	if(g_lap_analysis_enabled == 0U) return;
@@ -408,6 +429,12 @@ void GPS_LapProcess(const GPS_Data_t * data)
 	if(!g_lap_active) return;
 
 	now = HAL_GetTick();
+#if GPS_LAP_ENABLE_GEOMETRY == 0U
+	g_lap_current_ms = (int32_t)(now - g_lap_start_tick);
+	submit_lap_times_limited(now, 0U);
+	return;
+#endif
+#if GPS_LAP_ENABLE_GEOMETRY
 	curr_pos = project_to_line(&g_finish_line, data->latitude, data->longitude);
 	if(line_pos_valid(&curr_pos) == 0U) {
 		g_lap_prev_valid = 0U;
@@ -456,14 +483,13 @@ void GPS_LapProcess(const GPS_Data_t * data)
 									g_lap_count);
 		Dashboard_UI_SubmitLapDelta(g_lap_delta_ms / 10);
 	} else {
-		add_current_sample(&curr_pos, now, g_lap_current_ms, 0U);
-		update_live_delta(&curr_pos, g_lap_current_ms);
 		submit_lap_times_limited(now, 0U);
 	}
 
 	g_lap_prev_pos = curr_pos;
 	g_lap_prev_tick = now;
 	g_lap_prev_valid = 1U;
+#endif
 }
 
 const char * GPS_Lap_GetDeltaStr(char * buf, uint32_t size)

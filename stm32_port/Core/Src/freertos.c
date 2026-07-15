@@ -173,5 +173,13 @@ void StartDefaultTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
+void Fault_Diagnostic_Assert(void)
+{
+  /* Both LEDs solid identifies a FreeRTOS configASSERT.  CPU fault handlers
+   * use red solid / green off instead. */
+  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_SET);
+}
+
 /* USER CODE END Application */
 

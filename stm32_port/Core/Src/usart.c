@@ -24,6 +24,7 @@
 
 #include <string.h>
 #include "gps.h"
+#include "dashboard_ui.h"
 
 static uint8_t g_usart2_rx_byte;
 static char g_usart2_line_buf[16];
@@ -213,7 +214,9 @@ void MX_USART3_UART_Init(void)
   /* USER CODE BEGIN USART3_Init 2 */
 
   HAL_UART_Receive_DMA(&huart3, g_gps_dma_buf, GPS_DMA_BUF_SIZE);
-  __HAL_UART_ENABLE_IT(&huart3, UART_IT_IDLE);
+  /* GPS task polls the circular DMA write position every 20 ms.  Do not use
+   * UART IDLE notifications here: a noisy/continuous input must not turn the
+   * USART IRQ into a high-frequency FreeRTOS wake-up source. */
 
   /* USER CODE END USART3_Init 2 */
 

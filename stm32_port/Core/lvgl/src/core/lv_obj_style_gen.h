@@ -450,7 +450,7 @@ static inline int32_t lv_obj_get_style_margin_right(const lv_obj_t * obj, lv_par
  * @param  part   One of the `LV_PART_...` enum values
  */
 static inline lv_color_t lv_obj_get_style_bg_color(const lv_obj_t * obj, lv_part_t part)
-{
+  {
     lv_style_value_t v = lv_obj_get_style_prop(obj, part, LV_STYLE_BG_COLOR);
     return v.color;
 }

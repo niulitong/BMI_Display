@@ -1,6 +1,5 @@
 #include "main.h"
 #include "gps.h"
-#include "gps_lap.h"
 #include "can.h"
 #include "dashboard_ui.h"
 #include "FreeRTOS.h"
@@ -426,11 +425,6 @@ static void parse_GNRMC(const char * sentence)
 	taskEXIT_CRITICAL();
 
 	Dashboard_UI_SubmitSpeed(speed_kmh);
-	{
-		GPS_Data_t lap_data;
-		GPS_GetData(&lap_data);
-		GPS_LapProcess(&lap_data);
-	}
 	uint32_t now = HAL_GetTick();
 	if((g_gps_speed_can_last_tick == 0U) || ((now - g_gps_speed_can_last_tick) >= 200U)) {
 		g_gps_speed_can_last_tick = now;
@@ -592,8 +586,6 @@ static void GPS_SendCmd(const char * cmd)
 static void GPS_TaskFunc(void * argument)
 {
 	(void)argument;
-	uint32_t parse_count = 0;
-	uint32_t rmc_count   = 0;
 
 	vTaskDelay(pdMS_TO_TICKS(1500));
 
@@ -615,21 +607,12 @@ static void GPS_TaskFunc(void * argument)
 	vTaskDelay(pdMS_TO_TICKS(500));
 
 	for(;;) {
-		uint32_t notify_val = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(500));
-		uint8_t got_data = (notify_val > 0U) ? 1U : 0U;
+		/* The RX DMA is circular.  A fixed polling period bounds GPS CPU load
+		 * and avoids coupling task scheduling to USART IDLE IRQ frequency. */
+		vTaskDelay(pdMS_TO_TICKS(20));
 
 		GPS_SentenceProcess();
 		invalidate_expired_gsv();
-
-		{
-			uint32_t new_total = g_gps_sentence_count;
-			if(new_total > parse_count) {
-				parse_count = new_total;
-				rmc_count = parse_count;
-			}
-		}
-
-		(void)got_data;
 	}
 }
 
@@ -668,14 +651,8 @@ void GPS_Init(void)
 
 void GPS_ISR_Notify(void)
 {
-	if(!(__HAL_UART_GET_FLAG(&huart3, UART_FLAG_IDLE))) return;
-	__HAL_UART_CLEAR_IDLEFLAG(&huart3);
-
-	if(g_gps_task_handle != NULL && xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
-		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-		vTaskNotifyGiveFromISR(g_gps_task_handle, &xHigherPriorityTaskWoken);
-		portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-	}
+	/* Retained for the generated IRQ hook.  GPS RX is consumed by periodic
+	 * circular-DMA polling, so no FreeRTOS API is called from USART3 IRQ. */
 }
 
 void GPS_GetData(GPS_Data_t * out)

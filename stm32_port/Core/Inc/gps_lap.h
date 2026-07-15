@@ -13,6 +13,7 @@ uint8_t GPS_Lap_StartAtCurrent(const GPS_Data_t * data);
 void GPS_Lap_Reset(void);
 void GPS_Lap_SetAnalysisActive(uint8_t active);
 uint8_t GPS_Lap_IsAnalysisActive(void);
+void GPS_Lap_Tick(void);
 const char * GPS_Lap_GetDeltaStr(char * buf, uint32_t size);
 int32_t GPS_Lap_GetDeltaHundredths(void);
 int32_t GPS_Lap_GetCurrentLapHundredths(void);
@@ -28,6 +29,7 @@ int32_t GPS_Lap_GetCurrentLapNum(void);
 #define GPS_Lap_Reset()                  ((void)0)
 #define GPS_Lap_SetAnalysisActive(a)     ((void)(a))
 #define GPS_Lap_IsAnalysisActive()       0
+#define GPS_Lap_Tick()                   ((void)0)
 #define GPS_Lap_GetDeltaStr(b,s)         ("0.00s")
 #define GPS_Lap_GetDeltaHundredths()     0
 #define GPS_Lap_GetCurrentLapHundredths() 0
