@@ -141,12 +141,14 @@ static uint32_t g_dashboard_slow_ui_last_tick = 0U;
 static uint8_t g_lap_analysis_active = 0U;
 static uint8_t g_lap_analysis_blink_visible = 0U;
 static uint8_t g_lap_analysis_indicator_visible = 0xFFU;
+static GPS_LapDiagState_t g_lap_analysis_indicator_state = (GPS_LapDiagState_t)0xFFU;
 static uint32_t g_lap_analysis_blink_tick = 0U;
 
 #define DASHBOARD_ALERT_MAX 6U
 #define DASHBOARD_ALERT_TEXT_MAX 32U
 #define DASHBOARD_UI_FAST_PERIOD_MS 50U
 #define DASHBOARD_UI_SLOW_PERIOD_MS 200U
+#define LAP_START_MIN_SPEED_KMH     5.0f
 
 #define DASH_DIRTY_BATTERY  (1UL << 0)
 #define DASH_DIRTY_MODE     (1UL << 1)
@@ -458,6 +460,13 @@ static void dashboard_reset_lap_ui(void)
     g_last_lap_time = 0;
     g_best_lap_time = 0;
     g_lap_delta = 0;
+	g_pending_lap_delta = 0;
+	g_lap_delta_dirty = 0U;
+	g_pending_lap_current = 0;
+	g_pending_lap_last = 0;
+	g_pending_lap_best = 0;
+	g_pending_lap_count = 0;
+	g_lap_times_dirty = 0U;
     g_laps_current = 0;
     g_laps_left = 0;
 
@@ -472,19 +481,48 @@ static void dashboard_reset_lap_ui(void)
     update_lap_delta_ui();
 }
 
+static lv_color_t lap_diagnostic_color(GPS_LapDiagState_t state)
+{
+    switch(state) {
+        case GPS_LAP_DIAG_ARMED:
+            return lv_color_make(0x20, 0xD0, 0x50);
+        case GPS_LAP_DIAG_APPROACHING:
+            return lv_color_make(0xFF, 0xD0, 0x20);
+        case GPS_LAP_DIAG_GATE_MISS:
+            return lv_color_make(0xFF, 0x20, 0xD0);
+        case GPS_LAP_DIAG_REVERSE_PASS:
+            return lv_color_make(0x20, 0x80, 0xFF);
+        case GPS_LAP_DIAG_CROSSED:
+            return lv_color_make(0x20, 0xF0, 0xF0);
+        case GPS_LAP_DIAG_WAIT_ARM:
+        default:
+            return lv_color_make(0xFF, 0x1A, 0x1A);
+    }
+}
+
 static void update_lap_analysis_indicator(uint32_t now)
 {
+    GPS_LapDiagnostic_t diagnostic;
+
     if(g_dashboard.alert_circle == NULL) {
         return;
     }
 
     if(g_lap_analysis_active == 0U) {
         g_lap_analysis_blink_visible = 0U;
+        g_lap_analysis_indicator_state = (GPS_LapDiagState_t)0xFFU;
         if(g_lap_analysis_indicator_visible != 0U) {
             lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
             g_lap_analysis_indicator_visible = 0U;
         }
         return;
+    }
+
+    GPS_Lap_GetDiagnostic(&diagnostic);
+    if(g_lap_analysis_indicator_state != diagnostic.state) {
+        g_lap_analysis_indicator_state = diagnostic.state;
+        lv_obj_set_style_bg_color(g_dashboard.alert_circle,
+                                  lap_diagnostic_color(diagnostic.state), 0);
     }
 
     if((g_lap_analysis_blink_tick == 0U) || ((now - g_lap_analysis_blink_tick) >= 500U)) {
@@ -508,7 +546,6 @@ static void update_lap_analysis_indicator(uint32_t now)
 static void dashboard_toggle_lap_analysis(void)
 {
 	GPS_Data_t gps_data;
-	float line_heading;
 
     if(g_lap_analysis_active != 0U) {
         g_lap_analysis_active = 0U;
@@ -527,16 +564,21 @@ static void dashboard_toggle_lap_analysis(void)
         Dashboard_UI_PushAlert("gps no signal");
         return;
     }
-	line_heading = gps_data.heading_valid != 0U ?
-				   gps_data.heading_angle : gps_data.track_angle;
+	/* Lap geometry must follow the vehicle trajectory, not the ANT1-to-ANT2
+	 * baseline.  The antenna baseline may have an unknown or changing yaw in
+	 * temporary test installations, while RMC course is independent of it. */
+	if(gps_data.speed_kmh < LAP_START_MIN_SPEED_KMH) {
+		Dashboard_UI_PushAlert("move above 5 km/h");
+		return;
+	}
 
     GPS_Lap_Reset();
     GPS_Lap_SetStartLine(gps_data.latitude,
                          gps_data.longitude,
-                         line_heading);
+                         gps_data.track_angle);
     GPS_Lap_SetFinishLine(gps_data.latitude,
                           gps_data.longitude,
-                          line_heading);
+                          gps_data.track_angle);
     if(GPS_Lap_StartAtCurrent(&gps_data) == 0U) {
         Dashboard_UI_PushAlert("gps position invalid");
         return;
@@ -1025,6 +1067,10 @@ void Dashboard_UI_SubmitLapDelta(int32_t delta_hundredths)
 {
     if(delta_hundredths > 500) delta_hundredths = 500;
     if(delta_hundredths < -500) delta_hundredths = -500;
+	if(((g_lap_delta_dirty != 0U) && (g_pending_lap_delta == delta_hundredths)) ||
+	   ((g_lap_delta_dirty == 0U) && (g_lap_delta == delta_hundredths))) {
+		return;
+	}
     g_pending_lap_delta = delta_hundredths;
     g_lap_delta_dirty = 1U;
 }

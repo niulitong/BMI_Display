@@ -1,5 +1,6 @@
 #include "main.h"
 #include "gps.h"
+#include "gps_lap.h"
 #include "can.h"
 #include "dashboard_ui.h"
 #include "FreeRTOS.h"
@@ -425,6 +426,11 @@ static void parse_GNRMC(const char * sentence)
 	taskEXIT_CRITICAL();
 
 	Dashboard_UI_SubmitSpeed(speed_kmh);
+	{
+		GPS_Data_t lap_data;
+		GPS_GetData(&lap_data);
+		GPS_LapProcess(&lap_data);
+	}
 	uint32_t now = HAL_GetTick();
 	if((g_gps_speed_can_last_tick == 0U) || ((now - g_gps_speed_can_last_tick) >= 200U)) {
 		g_gps_speed_can_last_tick = now;
