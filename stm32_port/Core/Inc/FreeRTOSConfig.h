@@ -154,6 +154,8 @@ See http://www.FreeRTOS.org/RTOS-Cortex-M3-M4.html. */
 /* Normal assert() semantics without relying on the provision of an assert.h
 header file. */
 /* USER CODE BEGIN 1 */
+#define configCHECK_FOR_STACK_OVERFLOW 2
+#define configUSE_MALLOC_FAILED_HOOK   1
 void Fault_Diagnostic_Assert(void);
 #define configASSERT( x ) do { if ((x) == 0) { taskDISABLE_INTERRUPTS(); Fault_Diagnostic_Assert(); for( ;; ); } } while (0)
 /* USER CODE END 1 */

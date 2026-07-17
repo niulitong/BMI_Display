@@ -42,8 +42,34 @@ uint16_t CAN1_RX_MSG_ID_BANK1[4] = {0x506, 0x509, 0x508, 0x507};
 uint16_t CAN1_RX_MSG_ID_BANK2[4] = {0x503, 0x504, 0x503, 0x504};
 /* Bank3: IMU_Raw(0x50 BO_80) -> FIFO1 */
 uint16_t CAN1_RX_MSG_ID_BANK3[4] = {0x050, 0x050, 0x050, 0x050};
+/* Bank4: Vehicle_CanB.dbc SteeringPanel(0x700), redundant DriveMode(0x784) */
+uint16_t CAN1_RX_MSG_ID_BANK4[4] = {0x700, 0x784, 0x700, 0x784};
+/* Bank5: Tire-temperature cells 1..16, four cells per frame. */
+uint16_t CAN1_RX_MSG_ID_BANK5[4] = {0x071, 0x072, 0x073, 0x074};
+static uint8_t g_steering_recorder_prev;
+static uint8_t g_steering_error_clear_prev;
+static uint8_t g_steering_mode_seen;
+
+#define CAN_ID_GPS_POSITION        0x067U
+#define CAN_ID_GPS_MOTION          0x068U
+#define CAN_ID_GPS_STATUS          0x069U
+#define CAN_ID_GPS_LAP             0x06AU
+#define USER_CAN_TX_QUEUE_CAPACITY 32U
+
+typedef struct {
+  uint32_t id;
+  uint8_t dlc;
+  uint8_t data[8];
+} User_CAN_TxItem_t;
+
+static User_CAN_TxItem_t g_user_can_tx_queue[USER_CAN_TX_QUEUE_CAPACITY];
+static volatile uint8_t g_user_can_tx_head;
+static volatile uint8_t g_user_can_tx_tail;
+static volatile uint8_t g_user_can_tx_count;
+static volatile uint8_t g_user_can_tx_draining;
+static volatile uint32_t g_user_can_tx_drop_count;
 static dashboard_data_t g_can_dashboard_data = {
-  .speed = 24,             /* DBC BO_769 GPS_Speed: GroundSpeed */
+  .speed = 11,             /* Startup placeholder; GPS speed is submitted separately. */
   .soc = 24,               /* BMS(非DBC总线) */
   .mode_index = 0,         /* DBC BO_1289 Debug9: ModeFlag [-8,7] */
   .torque = {24, 24, 24, 24},     /* DBC BO_1282 Debug2: ActualTorque (1,0) */
@@ -67,9 +93,41 @@ static dashboard_data_t g_can_dashboard_data = {
   .imu_mag = {0, 0, 0},     /* DBC BO_102 IMU_Magnetic: raw int16, scale=1 */
   .signal_level = 0,        /* 非DBC */
   .alert_active = 1,        /* 非DBC */
-  .odometer_tenths = 412,   /* 非DBC: 里程 0.1km */
+  .odometer_tenths = 0,     /* GPS/SD-owned odometer, not populated from CAN */
   .brake_pct = 10,          /* 非DBC: 制动 0~100% */
 };
+
+static int32_t User_CAN_DecodeTireTemperatureCenti(uint8_t integer_part,
+                                                   uint8_t fractional_part)
+{
+  if(fractional_part > 99U) fractional_part = 99U;
+  return ((int32_t)integer_part * 100) + (int32_t)fractional_part;
+}
+
+static void User_CAN_SubmitTireTemperatureFrame(uint32_t can_id,
+                                                const uint8_t data[8])
+{
+  /* Frame order follows the screen-cell numbering:
+   * 0x71: RF outside->inside (#1..#4)
+   * 0x72: LF inside->outside (#5..#8)
+   * 0x73: LR outside->inside (#9..#12)
+   * 0x74: RR inside->outside (#13..#16). */
+  static const uint8_t dashboard_wheel[4] = {2U, 0U, 1U, 3U};
+  static const uint8_t reverse_segment_order[4] = {0U, 1U, 0U, 1U};
+  uint32_t frame_index = can_id - 0x071U;
+  int32_t temperatures_centi[4];
+
+  if((data == NULL) || (frame_index >= 4U)) return;
+  for(uint32_t payload_index = 0U; payload_index < 4U; payload_index++) {
+    uint32_t segment_index = (reverse_segment_order[frame_index] != 0U) ?
+                             (3U - payload_index) : payload_index;
+    temperatures_centi[segment_index] =
+        User_CAN_DecodeTireTemperatureCenti(data[payload_index * 2U],
+                                            data[payload_index * 2U + 1U]);
+  }
+  Dashboard_UI_SubmitTireTemperaturesCenti(dashboard_wheel[frame_index],
+                                           temperatures_centi);
+}
 /* USER CODE END 0 */
 
 CAN_HandleTypeDef hcan1;
@@ -299,7 +357,7 @@ void CAN1_Filter_Config(void)
 	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK0[3] << 5;
 	CAN_FilterInitStructure.FilterMode = CAN_FILTERMODE_IDLIST;
 	CAN_FilterInitStructure.FilterScale = CAN_FILTERSCALE_16BIT;
-	CAN_FilterInitStructure.SlaveStartFilterBank = 0;
+	CAN_FilterInitStructure.SlaveStartFilterBank = 14;
 	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
 
 	/* Bank 1: Debug6_MotorTemp(0x506), Debug9_Status(0x509), Debug8_IGBT(0x508), Debug7_Inverter(0x507) */
@@ -326,22 +384,96 @@ void CAN1_Filter_Config(void)
 	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK3[2] << 5;
 	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK3[3] << 5;
 	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
+
+	/* Bank 4: steering wheel event/control packets -> FIFO0 */
+	CAN_FilterInitStructure.FilterBank = 0x04;
+	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK4[0] << 5;
+	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK4[1] << 5;
+	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK4[2] << 5;
+	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK4[3] << 5;
+	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
+
+	/* Bank 5: tire-temperature frames 0x071..0x074 -> FIFO0 */
+	CAN_FilterInitStructure.FilterBank = 0x05;
+	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK5[0] << 5;
+	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK5[1] << 5;
+	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK5[2] << 5;
+	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK5[3] << 5;
+	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
 }
 
 /*
  * @func: CAN报文发送[标准格式、数据帧]
  */
+static void User_CAN_TxQueueDrain(void)
+{
+  CAN_TxHeaderTypeDef tx_header;
+  uint32_t tx_mailbox;
+  uint32_t primask = __get_PRIMASK();
+
+  __disable_irq();
+  if(g_user_can_tx_draining != 0U) {
+    __set_PRIMASK(primask);
+    return;
+  }
+  g_user_can_tx_draining = 1U;
+
+  while((g_user_can_tx_count > 0U) &&
+        (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) > 0U)) {
+    User_CAN_TxItem_t * item = &g_user_can_tx_queue[g_user_can_tx_head];
+
+    tx_header.RTR = CAN_RTR_DATA;
+    tx_header.IDE = CAN_ID_STD;
+    tx_header.StdId = item->id;
+    tx_header.TransmitGlobalTime = DISABLE;
+    tx_header.DLC = item->dlc;
+    if(HAL_CAN_AddTxMessage(&hcan1, &tx_header, item->data, &tx_mailbox) != HAL_OK) {
+      break;
+    }
+    g_user_can_tx_head = (uint8_t)((g_user_can_tx_head + 1U) % USER_CAN_TX_QUEUE_CAPACITY);
+    g_user_can_tx_count--;
+  }
+
+  g_user_can_tx_draining = 0U;
+  __set_PRIMASK(primask);
+}
+
+static uint8_t User_CAN_TxQueuePush(uint32_t can_id, const uint8_t * data, uint32_t dlc)
+{
+  uint32_t primask;
+  User_CAN_TxItem_t * item;
+
+  if((data == NULL) || (dlc > 8U)) return 0U;
+
+  primask = __get_PRIMASK();
+  __disable_irq();
+  if(g_user_can_tx_count >= USER_CAN_TX_QUEUE_CAPACITY) {
+    g_user_can_tx_drop_count++;
+    __set_PRIMASK(primask);
+    return 0U;
+  }
+
+  item = &g_user_can_tx_queue[g_user_can_tx_tail];
+  item->id = can_id;
+  item->dlc = (uint8_t)dlc;
+  for(uint32_t index = 0U; index < 8U; index++) {
+    item->data[index] = (index < dlc) ? data[index] : 0U;
+  }
+  g_user_can_tx_tail = (uint8_t)((g_user_can_tx_tail + 1U) % USER_CAN_TX_QUEUE_CAPACITY);
+  g_user_can_tx_count++;
+  __set_PRIMASK(primask);
+
+  User_CAN_TxQueueDrain();
+  return 1U;
+}
+
+static void User_CAN_SendDlc(uint32_t can_id, const uint8_t * data, uint32_t dlc);
+
 void User_CAN_Send()
 {
-	CAN_TxHeaderTypeDef tx_header;
-	uint32_t tx_mailbox;
-
-	tx_header.RTR = CAN_RTR_DATA;
-	tx_header.IDE = CAN_ID_STD;
-	tx_header.StdId = CAN1_ID;
-	tx_header.TransmitGlobalTime = DISABLE;
-	tx_header.DLC = 8;
-	HAL_CAN_AddTxMessage(&hcan1, &tx_header, CAN_TxData, &tx_mailbox);
+	User_CAN_SendDlc(CAN1_ID, CAN_TxData, 8U);
 }
 
 /*
@@ -349,26 +481,19 @@ void User_CAN_Send()
  */
 //shaoqi_add
 //发送指定ID
+static void User_CAN_SendDlc(uint32_t can_id, const uint8_t * data, uint32_t dlc)
+{
+	(void)User_CAN_TxQueuePush(can_id, data, dlc);
+}
+
 void User_CAN_Send_sq(uint32_t CAN_ID_NEW,uint8_t* CAN_TxData_NEW)
 {
-	CAN_TxHeaderTypeDef tx_header;
-	uint32_t tx_mailbox;
-
-	tx_header.RTR = CAN_RTR_DATA;
-	tx_header.IDE = CAN_ID_STD;
-	tx_header.StdId = CAN_ID_NEW;
-	tx_header.TransmitGlobalTime = DISABLE;
-	tx_header.DLC = 8;
-	HAL_CAN_AddTxMessage(&hcan1, &tx_header, CAN_TxData_NEW, &tx_mailbox);
+	User_CAN_SendDlc(CAN_ID_NEW, CAN_TxData_NEW, 8U);
 }
 
 void CAN1_SendHeartbeat(void)
 {
   uint8_t heartbeat_data[8];
-
-  if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0U) {
-    return;
-  }
 
   heartbeat_data[0] = 0xA5;
   heartbeat_data[1] = 0x5A;
@@ -386,10 +511,6 @@ void CAN_RequestDriveMode(int32_t mode_index)
 {
   uint8_t mode_data[8] = {0};
   static const uint8_t mode_code[4] = {48U, 49U, 50U, 51U};
-
-  if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0U) {
-    return;
-  }
 
   if(mode_index < 0) mode_index = 0;
   if(mode_index > 3) mode_index = 3;
@@ -419,20 +540,94 @@ void CAN_ServiceTask(void *argument)
  *   BO_1286 Debug6=0x506, BO_1285 Debug5=0x505, BO_1282 Debug2=0x502,
  *   BO_1284 Debug4=0x504, BO_1283 Debug3=0x503,
  *   BO_773  DataLogger=0x305, BO_769 GPS_Speed=0x301(Display->ECU),
- *   BO_80   IMU_Raw=0x50
+ *   BO_103..106 GPS telemetry=0x067..0x06A(Display->WirelessGateway),
+ *   BO_113..116 tire-temperature cells 1..16=0x071..0x074,
+ *   BO_80   IMU_Raw=0x50,
+ *   Vehicle_CanB.dbc BO_1792=0x700, BO_1924=0x784
  * Wheel order mapping: DBC {RL,RR,FL,FR}(0,1,2,3) -> Dashboard {LF,LR,RF,RR}(0,1,2,3)
  *   dash[0]=LF <- DBC[2]=FL, dash[1]=LR <- DBC[0]=RL,
  *   dash[2]=RF <- DBC[3]=FR, dash[3]=RR <- DBC[1]=RR
  */
+void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+  if((hcan != NULL) && (hcan->Instance == CAN1)) User_CAN_TxQueueDrain();
+}
+
+void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+  if((hcan != NULL) && (hcan->Instance == CAN1)) User_CAN_TxQueueDrain();
+}
+
+void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+  if((hcan != NULL) && (hcan->Instance == CAN1)) User_CAN_TxQueueDrain();
+}
+
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
 	if(HAL_CAN_GetRxMessage(hcan, CAN_FILTER_FIFO0, &RxHeader, CAN_RxData)!= HAL_OK)
 	{
 		Error_Handler();
 	}
+	/* Empty the hardware FIFO during startup, but do not let vehicle traffic
+	 * alter UI/application state until the boot animation is fully complete. */
+	if(Dashboard_UI_IsStartupComplete() == 0U) {
+		return;
+	}
 
 	switch(RxHeader.StdId)
 	{
+	  /* Vehicle_CanB.dbc BO_113..116, cell order #1..#16.
+	   * Each pair is integer byte followed by hundredths byte. */
+	  case 0x071:
+	  case 0x072:
+	  case 0x073:
+	  case 0x074:
+	  {
+	    if(RxHeader.DLC == 8U) {
+	      User_CAN_SubmitTireTemperatureFrame(RxHeader.StdId, CAN_RxData);
+	    }
+	    return;
+	  }
+
+	  /* Vehicle_CanB.dbc BO_1792 SteeringPanel 0x700, event-driven */
+	  case 0x700:
+	  {
+	    uint8_t recorder;
+	    uint8_t error_clear;
+
+	    if(RxHeader.DLC < 3U) break;
+	    recorder = CAN_RxData[0] & 0x01U;
+	    error_clear = (CAN_RxData[0] >> 1) & 0x01U;
+	    if((recorder != 0U) && (g_steering_recorder_prev == 0U)) {
+	      Dashboard_UI_RequestLapToggle();
+	    }
+	    if((error_clear != 0U) && (g_steering_error_clear_prev == 0U)) {
+	      Dashboard_UI_RequestAlertClear();
+	    }
+	    g_steering_recorder_prev = recorder;
+	    g_steering_error_clear_prev = error_clear;
+
+	    if(CAN_RxData[1] <= 3U) {
+	      g_steering_mode_seen = 1U;
+	      Dashboard_UI_SubmitDriveMode((int32_t)CAN_RxData[1]);
+	    }
+	    if(CAN_RxData[2] <= 7U) {
+	      Dashboard_UI_SubmitSlipLevel((int32_t)CAN_RxData[2]);
+	    }
+	    break;
+	  }
+
+	  /* Vehicle_CanB.dbc BO_1924 DriveMode 0x784, redundant mode packet */
+	  case 0x784:
+	  {
+	    if((RxHeader.DLC >= 1U) && (CAN_RxData[0] <= 3U)) {
+	      g_steering_mode_seen = 1U;
+	      Dashboard_UI_SubmitDriveMode((int32_t)CAN_RxData[0]);
+	    }
+	    break;
+	  }
+
 	  /* BMS 0x401 - 非DBC/VCI协议: SOC(byte6), Volt(byte0-1), Curr(byte4-5), MaxTemp(byte7) */
 	  case 0x401:
 	  {
@@ -513,6 +708,9 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	      int32_t mode_val = (int32_t)((CAN_RxData[0] >> 4) & 0x0FU);
 	      if(mode_val & 8) mode_val -= 16;
 	      g_can_dashboard_data.mode_index = mode_val;
+	      if(g_steering_mode_seen == 0U) {
+	        Dashboard_UI_SubmitDriveMode(mode_val);
+	      }
 	    }
 	    break;
 	  }
@@ -578,12 +776,14 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 
 /*
  * @func: CAN_SendGPSSpeed - send GPS speed to ECU
- * DBC BO_769 GPS_Speed 0x301: GroundSpeed (0.1,0) km/h, Display->ECU
- * Speed source: GNSS module via gps.c RMC message
+ * DBC BO_769 GPS_Speed 0x301, DLC=2:
+ * GroundSpeed bits 0..15, Intel unsigned, factor 0.1 km/h, Display->ECU.
+ * Source: GNSS RMC knots -> 0.01 km/h internal -> rounded 0.1 km/h CAN,
+ * periodic 50 ms; invalid or stale RMC data is transmitted as zero.
  */
 void CAN_SendGPSSpeed(int32_t speed_kmh_tenths)
 {
-  uint8_t speed_data[8] = {0};
+  uint8_t speed_data[2] = {0};
 
   if(speed_kmh_tenths < 0) speed_kmh_tenths = 0;
   if(speed_kmh_tenths > 3000) speed_kmh_tenths = 3000;
@@ -593,9 +793,77 @@ void CAN_SendGPSSpeed(int32_t speed_kmh_tenths)
 
   g_can_dashboard_data.speed = (speed_kmh_tenths + 5) / 10;
 
-  if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) > 0U) {
-    User_CAN_Send_sq(0x301, speed_data);
-  }
+  User_CAN_SendDlc(0x301, speed_data, 2U);
+}
+
+static void can_pack_u16_le(uint8_t * data, uint16_t value)
+{
+  data[0] = (uint8_t)(value & 0xFFU);
+  data[1] = (uint8_t)((value >> 8) & 0xFFU);
+}
+
+static void can_pack_u32_le(uint8_t * data, uint32_t value)
+{
+  data[0] = (uint8_t)(value & 0xFFU);
+  data[1] = (uint8_t)((value >> 8) & 0xFFU);
+  data[2] = (uint8_t)((value >> 16) & 0xFFU);
+  data[3] = (uint8_t)((value >> 24) & 0xFFU);
+}
+
+static void can_pack_u24_le(uint8_t * data, uint32_t value)
+{
+  data[0] = (uint8_t)(value & 0xFFU);
+  data[1] = (uint8_t)((value >> 8) & 0xFFU);
+  data[2] = (uint8_t)((value >> 16) & 0xFFU);
+}
+
+/*
+ * GPS telemetry snapshot, all standard IDs and all new payloads use DLC=8.
+ * 0x067: latitude/longitude; 0x068: motion/heading; 0x069: status/odometer;
+ * 0x06A: lap timing. Tire inputs use 0x071..0x074 and are not used for GPS TX.
+ */
+void CAN_SendGPSTelemetry(const CAN_GPSTelemetry_t * telemetry)
+{
+  uint8_t position_data[8];
+  uint8_t motion_data[8];
+  uint8_t status_data[8];
+  uint8_t lap_data[8];
+  uint16_t packed_status;
+  uint32_t odometer_tenths;
+
+  if(telemetry == NULL) return;
+
+  can_pack_u32_le(&position_data[0], (uint32_t)telemetry->latitude_e7);
+  can_pack_u32_le(&position_data[4], (uint32_t)telemetry->longitude_e7);
+
+  can_pack_u16_le(&motion_data[0], telemetry->ground_track_cdeg);
+  can_pack_u16_le(&motion_data[2], telemetry->heading_cdeg);
+  can_pack_u16_le(&motion_data[4], (uint16_t)telemetry->altitude_dm);
+  packed_status = (uint16_t)(telemetry->status_flags & 0x0FU);
+  packed_status |= (uint16_t)((telemetry->lap_diag_state > 7U ? 7U : telemetry->lap_diag_state) << 4);
+  packed_status |= (uint16_t)((telemetry->heading_quality > 7U ? 7U : telemetry->heading_quality) << 7);
+  packed_status |= (uint16_t)((telemetry->fix_quality > 7U ? 7U : telemetry->fix_quality) << 10);
+  packed_status |= (uint16_t)((telemetry->signal_level > 7U ? 7U : telemetry->signal_level) << 13);
+  can_pack_u16_le(&motion_data[6], packed_status);
+
+  odometer_tenths = telemetry->odometer_tenths_km;
+  if(odometer_tenths > 0xFFFFFFU) odometer_tenths = 0xFFFFFFU;
+  can_pack_u24_le(&status_data[0], odometer_tenths);
+  status_data[3] = (uint8_t)telemetry->max_snr;
+  status_data[4] = (uint8_t)telemetry->avg_snr;
+  status_data[5] = telemetry->satellites;
+  status_data[6] = telemetry->gsv_tracked_sats;
+  status_data[7] = telemetry->lap_count;
+
+  can_pack_u16_le(&lap_data[0], telemetry->lap_current_cs);
+  can_pack_u16_le(&lap_data[2], telemetry->lap_last_cs);
+  can_pack_u16_le(&lap_data[4], telemetry->lap_best_cs);
+  can_pack_u16_le(&lap_data[6], (uint16_t)telemetry->lap_delta_cs);
+
+  User_CAN_SendDlc(CAN_ID_GPS_POSITION, position_data, 8U);
+  User_CAN_SendDlc(CAN_ID_GPS_MOTION, motion_data, 8U);
+  User_CAN_SendDlc(CAN_ID_GPS_STATUS, status_data, 8U);
+  User_CAN_SendDlc(CAN_ID_GPS_LAP, lap_data, 8U);
 }
 
 /*

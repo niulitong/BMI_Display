@@ -25,6 +25,8 @@ typedef struct {
     lv_obj_t * delta_value;
     lv_obj_t * mode_tile;
     lv_obj_t * mode_value;
+    lv_obj_t * slip_value;
+    lv_obj_t * slip_bars[8];
     lv_obj_t * soc_value;
     lv_obj_t * battery_fill;
     lv_obj_t * throttle_bar_fill;
@@ -33,6 +35,7 @@ typedef struct {
     lv_obj_t * wheel_fr;
     lv_obj_t * wheel_rl;
     lv_obj_t * wheel_rr;
+    lv_obj_t * tire_max_labels[4];
     lv_obj_t * lightning_fl;
     lv_obj_t * lightning_fr;
     lv_obj_t * lightning_rl;
@@ -81,9 +84,10 @@ typedef enum {
 
 static dashboard_ui_t g_dashboard;
 static drive_mode_t g_drive_mode = DRIVE_MODE_S;
-static int32_t g_speed = 24;
+static int32_t g_speed = 11;
 static int32_t g_soc = 24;
 static int32_t g_mode_index = 0;
+static int32_t g_slip_level = 0;
 static int32_t g_torque[4] = {24, 24, 24, 24};
 static int32_t g_rpm[4] = {24, 24, 24, 24};
 static int32_t g_sum_voltage = 24;
@@ -95,7 +99,6 @@ static int32_t g_best_lap_time = 0;
 static int32_t g_lap_delta = 0;
 static int32_t g_laps_current = 0;
 static int32_t g_laps_left = 0;
-static int32_t g_vehicle_distance_m = 0;
 static int32_t g_throttle_opening = 0;
 static int32_t g_brake_force = 0;
 static int32_t g_power_live = 12;
@@ -103,16 +106,21 @@ static int32_t g_power_peak = 36;
 static int32_t g_motor_power_live[4] = {10, 10, 9, 9};
 static int32_t g_motor_power_peak[4] = {24, 24, 23, 23};
 static int32_t g_motor_temp[4] = {48, 47, 49, 50};
-static int32_t g_tire_temp_fl = 35;
-static int32_t g_tire_temp_fr = 48;
-static int32_t g_tire_temp_rl = 58;
-static int32_t g_tire_temp_rr = 66;
+/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR; segment order is outside-to-inside.
+ * Tire temperatures are stored in 0.01 degC to preserve the CAN precision. */
+static int32_t g_tire_temp[4][4] = {
+    {3200, 4600, 6000, 7600},
+    {3500, 4900, 6300, 7900},
+    {3000, 4400, 5800, 7400},
+    {3800, 5200, 6600, 8000}
+};
+static volatile int32_t g_pending_tire_temp[4][4];
 static bool g_motor_fl_online = true;
 static bool g_motor_fr_online = true;
 static bool g_motor_rl_online = true;
 static bool g_motor_rr_online = true;
 static dashboard_data_t g_dashboard_data = {
-    .speed = 24,
+    .speed = 11,
     .soc = 24,
     .mode_index = 0,
     .torque = {24, 24, 24, 24},
@@ -124,7 +132,7 @@ static dashboard_data_t g_dashboard_data = {
 };
 static volatile dashboard_data_t g_pending_dashboard_data;
 static volatile uint32_t g_dashboard_dirty_mask = 0U;
-static volatile int32_t g_pending_speed = 24;
+static volatile int32_t g_pending_speed = 11;
 static volatile uint8_t g_speed_dirty = 0U;
 static volatile int32_t g_pending_signal_level = 0;
 static volatile uint8_t g_signal_dirty = 0U;
@@ -158,9 +166,17 @@ static uint32_t g_lap_analysis_blink_tick = 0U;
 #define DASH_DIRTY_MOTOR_2  (1UL << 5)
 #define DASH_DIRTY_MOTOR_3  (1UL << 6)
 #define DASH_DIRTY_ODOMETER (1UL << 7)
+#define DASH_DIRTY_SLIP     (1UL << 8)
+#define DASH_DIRTY_TIRE_0   (1UL << 9)
+#define DASH_DIRTY_TIRE_1   (1UL << 10)
+#define DASH_DIRTY_TIRE_2   (1UL << 11)
+#define DASH_DIRTY_TIRE_3   (1UL << 12)
 #define DASH_DIRTY_MOTORS   (DASH_DIRTY_MOTOR_0 | DASH_DIRTY_MOTOR_1 | \
                              DASH_DIRTY_MOTOR_2 | DASH_DIRTY_MOTOR_3)
-#define DASH_DIRTY_FAST     (DASH_DIRTY_MODE | DASH_DIRTY_PEDALS | DASH_DIRTY_MOTORS)
+#define DASH_DIRTY_TIRES    (DASH_DIRTY_TIRE_0 | DASH_DIRTY_TIRE_1 | \
+                             DASH_DIRTY_TIRE_2 | DASH_DIRTY_TIRE_3)
+#define DASH_DIRTY_FAST     (DASH_DIRTY_MODE | DASH_DIRTY_PEDALS | DASH_DIRTY_MOTORS | \
+                             DASH_DIRTY_SLIP | DASH_DIRTY_TIRES)
 #define DASH_DIRTY_SLOW     (DASH_DIRTY_BATTERY | DASH_DIRTY_ODOMETER)
 #define DASH_DIRTY_ALL      (DASH_DIRTY_FAST | DASH_DIRTY_SLOW)
 static char g_alert_queue[DASHBOARD_ALERT_MAX][DASHBOARD_ALERT_TEXT_MAX];
@@ -170,6 +186,7 @@ static volatile uint8_t g_pending_alert_count = 0U;
 static volatile uint8_t g_pending_alert_pop_count = 0U;
 static volatile uint8_t g_pending_lap_toggle = 0U;
 static volatile uint8_t g_pending_mode_toggle = 0U;
+static volatile uint8_t g_pending_alert_clear = 0U;
 
 #define DASHBOARD_FONT_SMALL (&lv_font_montserrat_18)
 #define DASHBOARD_FONT_MEDIUM (&lv_font_montserrat_18)
@@ -232,6 +249,8 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define DELTA_BAR_CENTER_X 42
 #define DELTA_BAR_RIGHT_X 78
 #define DELTA_BAR_FILL_H 15
+#define DELTA_BAR_FULL_SCALE_HUNDREDTHS 500
+#define DELTA_TEXT_LIMIT_HUNDREDTHS 3000
 
 #define PEDAL_BAR_W 24
 #define PEDAL_BAR_H 122
@@ -242,15 +261,61 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define UI_SPEED_DIGIT_H 140
 #define UI_SPEED_SEG_THICKNESS 12
 #define UI_SPEED_DIGIT_GAP 18
+#define UI_SPEED_BOX_Y 72
+#define UI_SPEED_BOX_HEIGHT 210
+#define UI_TIRE_WIDTH 42
+#define UI_TIRE_HEIGHT 54
+#define UI_TIRE_LEFT_X 32
+#define UI_TIRE_RIGHT_X 106
+#define UI_TIRE_FRONT_Y 148
+#define UI_TIRE_REAR_Y 208
 
-static lv_color_t temp_to_color(int32_t temp)
+static lv_color_t temp_to_color(int32_t temp_centi)
 {
-    if(temp < 30) temp = 30;
-    if(temp > 80) temp = 80;
+    if(temp_centi < 3000) temp_centi = 3000;
+    if(temp_centi > 8000) temp_centi = 8000;
 
     return lv_color_mix(lv_palette_main(LV_PALETTE_RED),
                         lv_palette_main(LV_PALETTE_GREEN),
-                        (uint8_t)(((temp - 30) * 255) / 50));
+                        (uint8_t)(((temp_centi - 3000) * 255) / 5000));
+}
+
+/* Draw the four tread-temperature bands inside the existing wheel object.
+ * Keeping the bands as drawing primitives avoids 16 extra LVGL objects on the
+ * STM32, whose former 32 KiB LVGL heap reached its initialization limit. */
+static void tire_draw_event_cb(lv_event_t * event)
+{
+    lv_obj_t * wheel = lv_event_get_current_target_obj(event);
+    lv_layer_t * layer = lv_event_get_layer(event);
+    lv_area_t wheel_coords;
+    lv_draw_rect_dsc_t rect_dsc;
+    int32_t wheel_index = -1;
+
+    if(wheel == g_dashboard.wheel_fl) wheel_index = 0;
+    else if(wheel == g_dashboard.wheel_rl) wheel_index = 1;
+    else if(wheel == g_dashboard.wheel_fr) wheel_index = 2;
+    else if(wheel == g_dashboard.wheel_rr) wheel_index = 3;
+    if((wheel_index < 0) || (layer == NULL)) return;
+
+    lv_obj_get_coords(wheel, &wheel_coords);
+    lv_draw_rect_dsc_init(&rect_dsc);
+    rect_dsc.bg_opa = LV_OPA_COVER;
+    rect_dsc.border_opa = LV_OPA_TRANSP;
+    rect_dsc.radius = 0;
+
+    for(uint32_t segment = 0U; segment < 4U; segment++) {
+        uint32_t visual_segment = (wheel_index < 2) ? segment : (3U - segment);
+        lv_coord_t inner_x1 = wheel_coords.x1 + 1;
+        lv_coord_t inner_width = (wheel_coords.x2 - wheel_coords.x1 + 1) - 2;
+        lv_area_t segment_coords = {
+            .x1 = inner_x1 + (lv_coord_t)((visual_segment * (uint32_t)inner_width) / 4U),
+            .y1 = wheel_coords.y1 + 1,
+            .x2 = inner_x1 + (lv_coord_t)(((visual_segment + 1U) * (uint32_t)inner_width) / 4U) - 1,
+            .y2 = wheel_coords.y2 - 1
+        };
+        rect_dsc.bg_color = temp_to_color(g_tire_temp[wheel_index][segment]);
+        lv_draw_rect(layer, &rect_dsc, &segment_coords);
+    }
 }
 
 static lv_obj_t * create_panel(lv_obj_t * parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
@@ -292,6 +357,22 @@ static lv_obj_t * create_segment(lv_obj_t * parent, lv_coord_t x, lv_coord_t y, 
 
 static void update_lap_delta_ui(void);
 static void dashboard_toggle_mode(void);
+
+static void update_slip_level_ui(void)
+{
+    char text_buf[16];
+
+    if(g_dashboard.slip_value == NULL) return;
+    lv_snprintf(text_buf, sizeof(text_buf), "SLIP %ld", (long)g_slip_level);
+    lv_label_set_text(g_dashboard.slip_value, text_buf);
+    for(uint32_t index = 0U; index < 8U; index++) {
+        if(g_dashboard.slip_bars[index] == NULL) continue;
+        lv_obj_set_style_bg_color(g_dashboard.slip_bars[index],
+                                  (index <= (uint32_t)g_slip_level) ?
+                                  UI_TEXT_COLOR : UI_SEGMENT_OFF_COLOR, 0);
+        lv_obj_set_style_bg_opa(g_dashboard.slip_bars[index], LV_OPA_COVER, 0);
+    }
+}
 
 static void set_speed_digit_segment_state(lv_obj_t * segment, bool enabled)
 {
@@ -452,6 +533,13 @@ static void dashboard_pop_alert(void)
     update_alert_ui();
 }
 
+static void dashboard_clear_alerts(void)
+{
+    (void)memset(g_alert_queue, 0, sizeof(g_alert_queue));
+    g_alert_count = 0U;
+    update_alert_ui();
+}
+
 static void dashboard_reset_lap_ui(void)
 {
     char buf[16];
@@ -546,6 +634,7 @@ static void update_lap_analysis_indicator(uint32_t now)
 static void dashboard_toggle_lap_analysis(void)
 {
 	GPS_Data_t gps_data;
+    float line_heading;
 
     if(g_lap_analysis_active != 0U) {
         g_lap_analysis_active = 0U;
@@ -564,21 +653,28 @@ static void dashboard_toggle_lap_analysis(void)
         Dashboard_UI_PushAlert("gps no signal");
         return;
     }
-	/* Lap geometry must follow the vehicle trajectory, not the ANT1-to-ANT2
-	 * baseline.  The antenna baseline may have an unknown or changing yaw in
-	 * temporary test installations, while RMC course is independent of it. */
-	if(gps_data.speed_kmh < LAP_START_MIN_SPEED_KMH) {
-		Dashboard_UI_PushAlert("move above 5 km/h");
-		return;
-	}
+	/* A valid dual-antenna heading is available even while stationary.  RMC
+	 * course remains the fallback, so lap timing still works with one antenna. */
+    if(gps_data.heading_valid != 0U) {
+        line_heading = gps_data.heading_angle + GPS_HEADING_INSTALL_OFFSET_DEG;
+        while(line_heading < 0.0f) line_heading += 360.0f;
+        while(line_heading >= 360.0f) line_heading -= 360.0f;
+    }
+    else {
+        if(gps_data.speed_kmh < LAP_START_MIN_SPEED_KMH) {
+            Dashboard_UI_PushAlert("wait heading or move");
+            return;
+        }
+        line_heading = gps_data.track_angle;
+    }
 
     GPS_Lap_Reset();
     GPS_Lap_SetStartLine(gps_data.latitude,
                          gps_data.longitude,
-                         gps_data.track_angle);
+                         line_heading);
     GPS_Lap_SetFinishLine(gps_data.latitude,
                           gps_data.longitude,
-                          gps_data.track_angle);
+                          line_heading);
     if(GPS_Lap_StartAtCurrent(&gps_data) == 0U) {
         Dashboard_UI_PushAlert("gps position invalid");
         return;
@@ -595,7 +691,7 @@ static void update_lap_delta_ui(void)
 {
     char delta_buf[16];
     int32_t delta_abs;
-    int32_t max_abs = 50;
+    int32_t max_abs = DELTA_BAR_FULL_SCALE_HUNDREDTHS;
     lv_coord_t center_tick_x = DELTA_BAR_CENTER_X;
     lv_coord_t right_tick_x = DELTA_BAR_RIGHT_X;
     lv_coord_t fill_width;
@@ -699,41 +795,13 @@ static void sync_mode_from_index(void)
     }
 }
 
+static void apply_vehicle_motor_ui(uint32_t index);
+
 static void apply_vehicle_ui(void)
 {
-    lv_color_t fl = temp_to_color(g_tire_temp_fl);
-    lv_color_t fr = temp_to_color(g_tire_temp_fr);
-    lv_color_t rl = temp_to_color(g_tire_temp_rl);
-    lv_color_t rr = temp_to_color(g_tire_temp_rr);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fl, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_fl, fl, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_fl, fl, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_fl, LV_GRAD_DIR_VER, 0);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fr, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_fr, fr, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_fr, fr, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_fr, LV_GRAD_DIR_VER, 0);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rl, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_rl, rl, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_rl, rl, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_rl, LV_GRAD_DIR_VER, 0);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rr, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_rr, rr, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_rr, rr, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_rr, LV_GRAD_DIR_VER, 0);
-
-    if(g_motor_fl_online) lv_obj_clear_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
-    if(g_motor_fr_online) lv_obj_clear_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
-    if(g_motor_rl_online) lv_obj_clear_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
-    if(g_motor_rr_online) lv_obj_clear_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
+    for(uint32_t index = 0U; index < 4U; index++) {
+        apply_vehicle_motor_ui(index);
+    }
 }
 
 static void update_signal_bars(int32_t level)
@@ -770,8 +838,6 @@ static void update_signal_bars(int32_t level)
     }
 }
 
-static void apply_vehicle_motor_ui(uint32_t index);
-
 static void dashboard_apply_data(uint32_t dirty_mask)
 {
     static char text_buf[16];
@@ -798,6 +864,12 @@ static void dashboard_apply_data(uint32_t dirty_mask)
         g_mode_index = g_dashboard_data.mode_index;
         sync_mode_from_index();
         apply_drive_mode_ui();
+    }
+    if((dirty_mask & DASH_DIRTY_SLIP) != 0U) {
+        g_slip_level = g_dashboard_data.slip_level;
+        if(g_slip_level < 0) g_slip_level = 0;
+        if(g_slip_level > 7) g_slip_level = 7;
+        update_slip_level_ui();
     }
 
     int32_t display_speed = g_speed;
@@ -911,19 +983,8 @@ static void dashboard_apply_data(uint32_t dirty_mask)
     }
 
     for(uint32_t i = 0U; i < 4U; i++) {
-        int32_t mtemp = g_motor_temp[i];
-        if(mtemp < 0) mtemp = 0;
-        if(mtemp > 200) mtemp = 200;
-        switch(i) {
-            case 0: g_tire_temp_fl = mtemp; break;
-            case 1: g_tire_temp_rl = mtemp; break;
-            case 2: g_tire_temp_fr = mtemp; break;
-            case 3: g_tire_temp_rr = mtemp; break;
-        }
-    }
-
-    for(uint32_t i = 0U; i < 4U; i++) {
-        if((dirty_mask & (DASH_DIRTY_MOTOR_0 << i)) != 0U) {
+        if(((dirty_mask & (DASH_DIRTY_MOTOR_0 << i)) != 0U) ||
+           ((dirty_mask & (DASH_DIRTY_TIRE_0 << i)) != 0U)) {
             apply_vehicle_motor_ui(i);
         }
     }
@@ -943,42 +1004,55 @@ static void dashboard_apply_data(uint32_t dirty_mask)
 
 static void apply_vehicle_motor_ui(uint32_t index)
 {
-    lv_obj_t * wheel;
     lv_obj_t * lightning;
-    lv_color_t color;
+    lv_obj_t * wheel;
     bool online;
+    int32_t maximum_temp;
+    char text_buf[12];
 
     switch(index) {
         case 0U:
-            wheel = g_dashboard.wheel_fl;
             lightning = g_dashboard.lightning_fl;
-            color = temp_to_color(g_tire_temp_fl);
+            wheel = g_dashboard.wheel_fl;
             online = g_motor_fl_online;
             break;
         case 1U:
-            wheel = g_dashboard.wheel_rl;
             lightning = g_dashboard.lightning_rl;
-            color = temp_to_color(g_tire_temp_rl);
+            wheel = g_dashboard.wheel_rl;
             online = g_motor_rl_online;
             break;
         case 2U:
-            wheel = g_dashboard.wheel_fr;
             lightning = g_dashboard.lightning_fr;
-            color = temp_to_color(g_tire_temp_fr);
+            wheel = g_dashboard.wheel_fr;
             online = g_motor_fr_online;
             break;
         default:
-            wheel = g_dashboard.wheel_rr;
             lightning = g_dashboard.lightning_rr;
-            color = temp_to_color(g_tire_temp_rr);
+            wheel = g_dashboard.wheel_rr;
             online = g_motor_rr_online;
             break;
     }
 
-    lv_obj_set_style_bg_opa(wheel, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(wheel, color, 0);
-    lv_obj_set_style_bg_grad_color(wheel, color, 0);
-    lv_obj_set_style_bg_grad_dir(wheel, LV_GRAD_DIR_VER, 0);
+    maximum_temp = g_tire_temp[index][0];
+    for(uint32_t segment = 0U; segment < 4U; segment++) {
+        if(g_tire_temp[index][segment] > maximum_temp) {
+            maximum_temp = g_tire_temp[index][segment];
+        }
+    }
+    lv_obj_invalidate(wheel);
+    /* Keep the compact UI label integer-only; the stored value remains centi-degrees. */
+    lv_snprintf(text_buf, sizeof(text_buf), "%ld°", (long)((maximum_temp + 50) / 100));
+    lv_label_set_text(g_dashboard.tire_max_labels[index], text_buf);
+    if(index < 2U) {
+        /* Auto-sized labels grow to the right after text changes. Re-anchor the
+         * left-side values so the degree sign cannot enter the tire bands. */
+        lv_obj_update_layout(g_dashboard.tire_max_labels[index]);
+        lv_obj_align_to(g_dashboard.tire_max_labels[index], wheel,
+                        LV_ALIGN_OUT_LEFT_MID, -4, -11);
+        if(lv_obj_get_x(g_dashboard.tire_max_labels[index]) < 1) {
+            lv_obj_set_x(g_dashboard.tire_max_labels[index], 1);
+        }
+    }
     if(online) lv_obj_clear_flag(lightning, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(lightning, LV_OBJ_FLAG_HIDDEN);
 }
@@ -998,15 +1072,9 @@ void Dashboard_UI_SubmitData(const dashboard_data_t * data)
        (g_pending_dashboard_data.max_temperature != data->max_temperature)) {
         dirty_mask |= DASH_DIRTY_BATTERY;
     }
-    if(g_pending_dashboard_data.mode_index != data->mode_index) {
-        dirty_mask |= DASH_DIRTY_MODE;
-    }
     if((g_pending_dashboard_data.aps_open_pct != data->aps_open_pct) ||
        (g_pending_dashboard_data.brake_pct != data->brake_pct)) {
         dirty_mask |= DASH_DIRTY_PEDALS;
-    }
-    if(g_pending_dashboard_data.odometer_tenths != data->odometer_tenths) {
-        dirty_mask |= DASH_DIRTY_ODOMETER;
     }
     for(index = 0U; index < 4U; index++) {
         if((g_pending_dashboard_data.torque[index] != data->torque[index]) ||
@@ -1022,7 +1090,6 @@ void Dashboard_UI_SubmitData(const dashboard_data_t * data)
     }
 
     g_pending_dashboard_data.soc = data->soc;
-    g_pending_dashboard_data.mode_index = data->mode_index;
     g_pending_dashboard_data.sum_voltage = data->sum_voltage;
     g_pending_dashboard_data.sum_current = data->sum_current;
     g_pending_dashboard_data.max_temperature = data->max_temperature;
@@ -1034,10 +1101,53 @@ void Dashboard_UI_SubmitData(const dashboard_data_t * data)
         g_pending_dashboard_data.motor_temp[index] = data->motor_temp[index];
     }
     g_pending_dashboard_data.alert_active = data->alert_active;
-    g_pending_dashboard_data.odometer_tenths = data->odometer_tenths;
     g_pending_dashboard_data.brake_pct = data->brake_pct;
 
     g_dashboard_dirty_mask |= dirty_mask;
+}
+
+void Dashboard_UI_SubmitTireTemperatures(uint32_t wheel_index,
+                                         const int32_t temperatures[4])
+{
+    int32_t temperatures_centi[4];
+
+    if((wheel_index >= 4U) || (temperatures == NULL)) return;
+    for(uint32_t segment = 0U; segment < 4U; segment++) {
+        int32_t value = temperatures[segment];
+        if(value < -99) value = -99;
+        if(value > 200) value = 200;
+        temperatures_centi[segment] = value * 100;
+    }
+    Dashboard_UI_SubmitTireTemperaturesCenti(wheel_index, temperatures_centi);
+}
+
+void Dashboard_UI_SubmitTireTemperaturesCenti(uint32_t wheel_index,
+                                              const int32_t temperatures_centi[4])
+{
+    int32_t clamped[4];
+    uint32_t primask;
+    uint32_t dirty_bit;
+    uint8_t changed = 0U;
+
+    if((wheel_index >= 4U) || (temperatures_centi == NULL)) return;
+    for(uint32_t segment = 0U; segment < 4U; segment++) {
+        clamped[segment] = temperatures_centi[segment];
+        if(clamped[segment] < -9900) clamped[segment] = -9900;
+        if(clamped[segment] > 20000) clamped[segment] = 20000;
+    }
+
+    dirty_bit = DASH_DIRTY_TIRE_0 << wheel_index;
+    primask = __get_PRIMASK();
+    __disable_irq();
+    for(uint32_t segment = 0U; segment < 4U; segment++) {
+        int32_t current = ((g_dashboard_dirty_mask & dirty_bit) != 0U) ?
+                          g_pending_tire_temp[wheel_index][segment] :
+                          g_tire_temp[wheel_index][segment];
+        if(current != clamped[segment]) changed = 1U;
+        g_pending_tire_temp[wheel_index][segment] = clamped[segment];
+    }
+    if(changed != 0U) g_dashboard_dirty_mask |= dirty_bit;
+    if(primask == 0U) __enable_irq();
 }
 
 void Dashboard_UI_SubmitSignalLevel(int32_t level)
@@ -1063,10 +1173,84 @@ void Dashboard_UI_SubmitSpeed(int32_t speed)
     g_speed_dirty = 1U;
 }
 
+void Dashboard_UI_SubmitOdometer(int32_t odometer_tenths)
+{
+    uint32_t primask;
+
+    if(odometer_tenths < 0) odometer_tenths = 0;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    if(((g_dashboard_dirty_mask & DASH_DIRTY_ODOMETER) == 0U) &&
+       (g_dashboard_data.odometer_tenths == odometer_tenths)) {
+        if(primask == 0U) __enable_irq();
+        return;
+    }
+    if(g_pending_dashboard_data.odometer_tenths != odometer_tenths) {
+        g_pending_dashboard_data.odometer_tenths = odometer_tenths;
+        g_dashboard_dirty_mask |= DASH_DIRTY_ODOMETER;
+    }
+    if(primask == 0U) __enable_irq();
+}
+
+void Dashboard_UI_SubmitDriveMode(int32_t mode_index)
+{
+    uint32_t primask;
+
+    if((mode_index < 0) || (mode_index > 3)) return;
+    primask = __get_PRIMASK();
+    __disable_irq();
+    if(((g_dashboard_dirty_mask & DASH_DIRTY_MODE) == 0U) &&
+       (g_dashboard_data.mode_index == mode_index)) {
+        if(primask == 0U) __enable_irq();
+        return;
+    }
+    g_pending_dashboard_data.mode_index = mode_index;
+    g_dashboard_dirty_mask |= DASH_DIRTY_MODE;
+    if(primask == 0U) __enable_irq();
+}
+
+void Dashboard_UI_SubmitSlipLevel(int32_t slip_level)
+{
+    uint32_t primask;
+
+    if((slip_level < 0) || (slip_level > 7)) return;
+    primask = __get_PRIMASK();
+    __disable_irq();
+    if(((g_dashboard_dirty_mask & DASH_DIRTY_SLIP) == 0U) &&
+       (g_dashboard_data.slip_level == slip_level)) {
+        if(primask == 0U) __enable_irq();
+        return;
+    }
+    g_pending_dashboard_data.slip_level = slip_level;
+    g_dashboard_dirty_mask |= DASH_DIRTY_SLIP;
+    if(primask == 0U) __enable_irq();
+}
+
+void Dashboard_UI_RequestLapToggle(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    g_pending_lap_toggle = 1U;
+    if(primask == 0U) __enable_irq();
+}
+
+void Dashboard_UI_RequestAlertClear(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    g_pending_alert_clear = 1U;
+    if(primask == 0U) __enable_irq();
+}
+
 void Dashboard_UI_SubmitLapDelta(int32_t delta_hundredths)
 {
-    if(delta_hundredths > 500) delta_hundredths = 500;
-    if(delta_hundredths < -500) delta_hundredths = -500;
+    if(delta_hundredths > DELTA_TEXT_LIMIT_HUNDREDTHS) {
+        delta_hundredths = DELTA_TEXT_LIMIT_HUNDREDTHS;
+    }
+    if(delta_hundredths < -DELTA_TEXT_LIMIT_HUNDREDTHS) {
+        delta_hundredths = -DELTA_TEXT_LIMIT_HUNDREDTHS;
+    }
 	if(((g_lap_delta_dirty != 0U) && (g_pending_lap_delta == delta_hundredths)) ||
 	   ((g_lap_delta_dirty == 0U) && (g_lap_delta == delta_hundredths))) {
 		return;
@@ -1145,8 +1329,21 @@ void Dashboard_UI_Process(void)
 	   (g_signal_dirty == 0U) && (g_lap_delta_dirty == 0U) &&
 	   (g_lap_times_dirty == 0U) &&
 	   (g_pending_alert_count == 0U) && (g_pending_alert_pop_count == 0U) &&
-	   (g_pending_lap_toggle == 0U) && (g_pending_mode_toggle == 0U)) {
+	   (g_pending_lap_toggle == 0U) && (g_pending_mode_toggle == 0U) &&
+       (g_pending_alert_clear == 0U)) {
         return;
+    }
+
+    if(g_pending_alert_clear != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        g_pending_alert_clear = 0U;
+        g_pending_alert_count = 0U;
+        g_pending_alert_pop_count = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+        dashboard_clear_alerts();
     }
 
     if(g_pending_mode_toggle != 0U) {
@@ -1249,6 +1446,9 @@ void Dashboard_UI_Process(void)
         if((dashboard_mask & DASH_DIRTY_MODE) != 0U) {
             g_dashboard_data.mode_index = g_pending_dashboard_data.mode_index;
         }
+        if((dashboard_mask & DASH_DIRTY_SLIP) != 0U) {
+            g_dashboard_data.slip_level = g_pending_dashboard_data.slip_level;
+        }
         if((dashboard_mask & DASH_DIRTY_PEDALS) != 0U) {
             g_dashboard_data.aps_open_pct = g_pending_dashboard_data.aps_open_pct;
             g_dashboard_data.brake_pct = g_pending_dashboard_data.brake_pct;
@@ -1259,6 +1459,11 @@ void Dashboard_UI_Process(void)
                 g_dashboard_data.motor_enable[index] = g_pending_dashboard_data.motor_enable[index];
                 g_dashboard_data.rpm[index] = g_pending_dashboard_data.rpm[index];
                 g_dashboard_data.motor_temp[index] = g_pending_dashboard_data.motor_temp[index];
+            }
+            if((dashboard_mask & (DASH_DIRTY_TIRE_0 << index)) != 0U) {
+                for(uint32_t segment = 0U; segment < 4U; segment++) {
+                    g_tire_temp[index][segment] = g_pending_tire_temp[index][segment];
+                }
             }
         }
         if((dashboard_mask & DASH_DIRTY_ODOMETER) != 0U) {
@@ -1582,7 +1787,9 @@ void Dashboard_UI_Init(void)
     lv_obj_set_style_bg_color(g_dashboard.throttle_bar_fill, lv_palette_main(LV_PALETTE_GREEN), 0);
     lv_obj_set_style_bg_opa(g_dashboard.throttle_bar_fill, LV_OPA_COVER, 0);
 
-    lv_obj_t * speed_box = create_panel(middle_panel, UI_CENTER_PANEL_X, 72, UI_CENTER_PANEL_WIDTH, 210, UI_BG_COLOR, LV_OPA_COVER);
+    lv_obj_t * speed_box = create_panel(middle_panel, UI_CENTER_PANEL_X, UI_SPEED_BOX_Y,
+                                        UI_CENTER_PANEL_WIDTH, UI_SPEED_BOX_HEIGHT,
+                                        UI_BG_COLOR, LV_OPA_COVER);
     lv_obj_set_style_border_width(speed_box, 0, 0);
 
     create_speed_digits(speed_box);
@@ -1606,37 +1813,76 @@ void Dashboard_UI_Init(void)
     lv_obj_align(g_dashboard.mode_value, LV_ALIGN_CENTER, 0, 0);
     apply_drive_mode_ui();
 
-    g_dashboard.wheel_fl = create_panel(vehicle_box, 30, 160, 24, 54, UI_BG_COLOR, LV_OPA_TRANSP);
-    lv_obj_set_style_radius(g_dashboard.wheel_fl, 3, 0);
+    g_dashboard.slip_value = create_value(vehicle_box, "SLIP 0", UI_TEXT_COLOR,
+                                          DASHBOARD_FONT_SMALL);
+    lv_obj_set_pos(g_dashboard.slip_value, 55, 101);
+    for(uint32_t index = 0U; index < 8U; index++) {
+        g_dashboard.slip_bars[index] =
+            create_panel(vehicle_box, 12 + (lv_coord_t)(index * 20U), 132,
+                         14, 6, UI_SEGMENT_OFF_COLOR, LV_OPA_COVER);
+        lv_obj_set_style_border_width(g_dashboard.slip_bars[index], 0, 0);
+    }
+    update_slip_level_ui();
+
+    g_dashboard.wheel_fl = create_panel(vehicle_box, UI_TIRE_LEFT_X, UI_TIRE_FRONT_Y,
+                                        UI_TIRE_WIDTH, UI_TIRE_HEIGHT, UI_BG_COLOR, LV_OPA_COVER);
+    lv_obj_set_style_radius(g_dashboard.wheel_fl, 2, 0);
     g_dashboard.lightning_fl = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_fl, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_fl, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_style_text_font(g_dashboard.lightning_fl, DASHBOARD_FONT_LARGE, 0);
-    lv_obj_align_to(g_dashboard.lightning_fl, g_dashboard.wheel_fl, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_fl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_transform_scale(g_dashboard.lightning_fl, 288, 0);
+    lv_obj_align_to(g_dashboard.lightning_fl, g_dashboard.wheel_fl, LV_ALIGN_OUT_LEFT_MID, -2, 12);
 
-    g_dashboard.wheel_fr = create_panel(vehicle_box, 126, 160, 24, 54, UI_BG_COLOR, LV_OPA_TRANSP);
-    lv_obj_set_style_radius(g_dashboard.wheel_fr, 3, 0);
+    g_dashboard.wheel_fr = create_panel(vehicle_box, UI_TIRE_RIGHT_X, UI_TIRE_FRONT_Y,
+                                        UI_TIRE_WIDTH, UI_TIRE_HEIGHT, UI_BG_COLOR, LV_OPA_COVER);
+    lv_obj_set_style_radius(g_dashboard.wheel_fr, 2, 0);
     g_dashboard.lightning_fr = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_fr, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_fr, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_style_text_font(g_dashboard.lightning_fr, DASHBOARD_FONT_LARGE, 0);
-    lv_obj_align_to(g_dashboard.lightning_fr, g_dashboard.wheel_fr, LV_ALIGN_OUT_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_fr, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_transform_scale(g_dashboard.lightning_fr, 288, 0);
+    lv_obj_align_to(g_dashboard.lightning_fr, g_dashboard.wheel_fr, LV_ALIGN_OUT_RIGHT_MID, 2, 12);
 
-    g_dashboard.wheel_rl = create_panel(vehicle_box, 30, 228, 24, 54, UI_BG_COLOR, LV_OPA_TRANSP);
-    lv_obj_set_style_radius(g_dashboard.wheel_rl, 3, 0);
+    g_dashboard.wheel_rl = create_panel(vehicle_box, UI_TIRE_LEFT_X, UI_TIRE_REAR_Y,
+                                        UI_TIRE_WIDTH, UI_TIRE_HEIGHT, UI_BG_COLOR, LV_OPA_COVER);
+    lv_obj_set_style_radius(g_dashboard.wheel_rl, 2, 0);
     g_dashboard.lightning_rl = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_rl, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_rl, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_style_text_font(g_dashboard.lightning_rl, DASHBOARD_FONT_LARGE, 0);
-    lv_obj_align_to(g_dashboard.lightning_rl, g_dashboard.wheel_rl, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_rl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_transform_scale(g_dashboard.lightning_rl, 288, 0);
+    lv_obj_align_to(g_dashboard.lightning_rl, g_dashboard.wheel_rl, LV_ALIGN_OUT_LEFT_MID, -2, 12);
 
-    g_dashboard.wheel_rr = create_panel(vehicle_box, 126, 228, 24, 54, UI_BG_COLOR, LV_OPA_TRANSP);
-    lv_obj_set_style_radius(g_dashboard.wheel_rr, 3, 0);
+    g_dashboard.wheel_rr = create_panel(vehicle_box, UI_TIRE_RIGHT_X, UI_TIRE_REAR_Y,
+                                        UI_TIRE_WIDTH, UI_TIRE_HEIGHT, UI_BG_COLOR, LV_OPA_COVER);
+    lv_obj_set_style_radius(g_dashboard.wheel_rr, 2, 0);
     g_dashboard.lightning_rr = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_rr, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_rr, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_style_text_font(g_dashboard.lightning_rr, DASHBOARD_FONT_LARGE, 0);
-    lv_obj_align_to(g_dashboard.lightning_rr, g_dashboard.wheel_rr, LV_ALIGN_OUT_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_rr, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_transform_scale(g_dashboard.lightning_rr, 288, 0);
+    lv_obj_align_to(g_dashboard.lightning_rr, g_dashboard.wheel_rr, LV_ALIGN_OUT_RIGHT_MID, 2, 12);
+
+    {
+        lv_obj_t * tire_wheels[4] = {
+            g_dashboard.wheel_fl, g_dashboard.wheel_rl,
+            g_dashboard.wheel_fr, g_dashboard.wheel_rr
+        };
+        for(uint32_t wheel = 0U; wheel < 4U; wheel++) {
+            lv_obj_add_event_cb(tire_wheels[wheel], tire_draw_event_cb, LV_EVENT_DRAW_MAIN, NULL);
+            g_dashboard.tire_max_labels[wheel] =
+                create_value(vehicle_box, "0°", UI_TEXT_COLOR, &lv_font_montserrat_16);
+        }
+        lv_obj_align_to(g_dashboard.tire_max_labels[0], g_dashboard.wheel_fl,
+                        LV_ALIGN_OUT_LEFT_MID, -2, -11);
+        lv_obj_align_to(g_dashboard.tire_max_labels[1], g_dashboard.wheel_rl,
+                        LV_ALIGN_OUT_LEFT_MID, -2, -11);
+        lv_obj_align_to(g_dashboard.tire_max_labels[2], g_dashboard.wheel_fr,
+                        LV_ALIGN_OUT_RIGHT_MID, 2, -11);
+        lv_obj_align_to(g_dashboard.tire_max_labels[3], g_dashboard.wheel_rr,
+                        LV_ALIGN_OUT_RIGHT_MID, 2, -11);
+    }
 
     apply_vehicle_ui();
 
@@ -2013,4 +2259,10 @@ void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed)
 const dashboard_data_t * Dashboard_UI_GetCurrentData(void)
 {
     return &g_dashboard_data;
+}
+
+uint8_t Dashboard_UI_IsStartupComplete(void)
+{
+    /* Compatibility hook for the peripheral tasks: startup is immediate. */
+    return 1U;
 }

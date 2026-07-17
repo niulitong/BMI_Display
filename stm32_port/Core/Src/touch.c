@@ -95,6 +95,10 @@ void Touch_ServiceTask(void *argument)
 
     (void)argument;
 
+    while(Dashboard_UI_IsStartupComplete() == 0U) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
     init_ok = Touch_Cap_Init();
     if(init_ok == 0U) {
         vTaskDelete(NULL);
@@ -320,6 +324,10 @@ void Touch_ServiceTask(void *argument)
     uint8_t last_pressed = 0U;
 
     (void)argument;
+
+    while(Dashboard_UI_IsStartupComplete() == 0U) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
 
     if(Touch_Xpt2046Init() != 0U) {
         vTaskDelete(NULL);

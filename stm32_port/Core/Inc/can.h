@@ -38,6 +38,29 @@ extern CAN_HandleTypeDef hcan2;
 
 /* USER CODE BEGIN Private defines */
 
+typedef struct {
+  int32_t latitude_e7;
+  int32_t longitude_e7;
+  uint16_t ground_track_cdeg;
+  uint16_t heading_cdeg;
+  int16_t altitude_dm;
+  uint8_t status_flags;
+  uint8_t lap_diag_state;
+  uint8_t heading_quality;
+  uint32_t odometer_tenths_km;
+  uint8_t fix_quality;
+  uint8_t satellites;
+  uint8_t signal_level;
+  int8_t max_snr;
+  int8_t avg_snr;
+  uint8_t gsv_tracked_sats;
+  uint8_t lap_count;
+  uint16_t lap_current_cs;
+  uint16_t lap_last_cs;
+  uint16_t lap_best_cs;
+  int16_t lap_delta_cs;
+} CAN_GPSTelemetry_t;
+
 /* USER CODE END Private defines */
 
 void MX_CAN1_Init(void);
@@ -51,6 +74,7 @@ void CAN1_SendHeartbeat(void);
 void CAN_ServiceTask(void *argument);
 void CAN_RequestDriveMode(int32_t mode_index);
 void CAN_SendGPSSpeed(int32_t speed_kmh_tenths);
+void CAN_SendGPSTelemetry(const CAN_GPSTelemetry_t * telemetry);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

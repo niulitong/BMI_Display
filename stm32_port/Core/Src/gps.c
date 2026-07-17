@@ -3,8 +3,10 @@
 #include "gps_lap.h"
 #include "can.h"
 #include "dashboard_ui.h"
+#include "sd_log.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include <math.h>
 #include <string.h>
 
 extern UART_HandleTypeDef huart3;
@@ -32,10 +34,239 @@ static int32_t     g_gsv_window_snr_count;
 static int32_t     g_gsv_window_max_snr;
 static uint32_t    g_gsv_last_tick;
 static uint32_t    g_gsv_signal_ui_last_tick;
-static uint32_t    g_gps_speed_can_last_tick;
 static uint8_t     g_gga_signal_level;
+static uint32_t    g_hpr_last_tick;
+static uint32_t    g_gps_rmc_last_tick;
+static uint32_t    g_gps_can_last_tick;
+static uint8_t     g_gps_rmc_valid;
+
+static float       g_odometer_prev_latitude;
+static float       g_odometer_prev_longitude;
+static float       g_odometer_fraction_m;
+static uint32_t    g_odometer_prev_tick;
+static uint32_t    g_odometer_total_m;
+static uint32_t    g_odometer_checkpoint_m;
+static int32_t     g_odometer_ui_tenths;
+static uint8_t     g_odometer_anchor_valid;
 
 #define GPS_GSV_EXPIRE_MS             12000U
+#define GPS_HPR_EXPIRE_MS               1500U
+#define GPS_CAN_SPEED_PERIOD_MS            50U
+#define GPS_CAN_SPEED_STALE_MS             500U
+#define GPS_CAN_STATUS_POSITION_VALID      (1U << 0)
+#define GPS_CAN_STATUS_HEADING_VALID       (1U << 1)
+#define GPS_CAN_STATUS_LAP_ACTIVE          (1U << 2)
+#define GPS_CAN_STATUS_RMC_VALID           (1U << 3)
+#define GPS_ODOMETER_MIN_SPEED_CENTI      100
+#define GPS_ODOMETER_MAX_GAP_MS          2000U
+#define GPS_ODOMETER_MAX_STEP_M          50.0f
+#define GPS_ODOMETER_SAVE_INTERVAL_M     100U
+#define GPS_EARTH_RADIUS_M          6371000.0f
+#define GPS_DEG_TO_RAD             0.01745329251994329577f
+
+static void gps_odometer_init(void)
+{
+	g_odometer_total_m = 0U;
+	(void)SD_Odometer_Load(&g_odometer_total_m);
+	g_odometer_checkpoint_m = g_odometer_total_m;
+	g_odometer_fraction_m = 0.0f;
+	g_odometer_anchor_valid = 0U;
+	g_odometer_ui_tenths = (int32_t)(g_odometer_total_m / 100U);
+	Dashboard_UI_SubmitOdometer(g_odometer_ui_tenths);
+}
+
+static void gps_odometer_process(float latitude, float longitude,
+	                              int32_t speed_kmh_centi, uint32_t now)
+{
+	uint32_t elapsed_ms;
+	float north_m;
+	float east_m;
+	float distance_m;
+	float expected_m;
+	float max_plausible_m;
+	uint32_t whole_m;
+	int32_t ui_tenths;
+
+	if((latitude < -90.0f) || (latitude > 90.0f) ||
+	   (longitude < -180.0f) || (longitude > 180.0f) ||
+	   ((latitude == 0.0f) && (longitude == 0.0f))) {
+		g_odometer_anchor_valid = 0U;
+		return;
+	}
+	if(g_odometer_anchor_valid == 0U) {
+		g_odometer_prev_latitude = latitude;
+		g_odometer_prev_longitude = longitude;
+		g_odometer_prev_tick = now;
+		g_odometer_anchor_valid = 1U;
+		return;
+	}
+
+	elapsed_ms = now - g_odometer_prev_tick;
+	north_m = (latitude - g_odometer_prev_latitude) * GPS_DEG_TO_RAD *
+	          GPS_EARTH_RADIUS_M;
+	east_m = (longitude - g_odometer_prev_longitude) * GPS_DEG_TO_RAD *
+	         GPS_EARTH_RADIUS_M *
+	         cosf(((latitude + g_odometer_prev_latitude) * 0.5f) * GPS_DEG_TO_RAD);
+	distance_m = sqrtf((north_m * north_m) + (east_m * east_m));
+	g_odometer_prev_latitude = latitude;
+	g_odometer_prev_longitude = longitude;
+	g_odometer_prev_tick = now;
+
+	if((elapsed_ms == 0U) || (elapsed_ms > GPS_ODOMETER_MAX_GAP_MS) ||
+	   (speed_kmh_centi < GPS_ODOMETER_MIN_SPEED_CENTI)) {
+		return;
+	}
+	expected_m = ((float)speed_kmh_centi / 360000.0f) * (float)elapsed_ms;
+	max_plausible_m = (expected_m * 3.0f) + 3.0f;
+	if((distance_m < 0.05f) || (distance_m > GPS_ODOMETER_MAX_STEP_M) ||
+	   (distance_m > max_plausible_m)) {
+		return;
+	}
+
+	g_odometer_fraction_m += distance_m;
+	whole_m = (uint32_t)g_odometer_fraction_m;
+	if(whole_m == 0U) return;
+	g_odometer_fraction_m -= (float)whole_m;
+	if((UINT32_MAX - g_odometer_total_m) < whole_m) {
+		g_odometer_total_m = UINT32_MAX;
+	}
+	else {
+		g_odometer_total_m += whole_m;
+	}
+	if((g_odometer_total_m - g_odometer_checkpoint_m) >=
+	   GPS_ODOMETER_SAVE_INTERVAL_M) {
+		g_odometer_checkpoint_m = g_odometer_total_m;
+		SD_Odometer_RequestSave(g_odometer_total_m);
+	}
+
+	ui_tenths = (int32_t)(g_odometer_total_m / 100U);
+	if(ui_tenths != g_odometer_ui_tenths) {
+		g_odometer_ui_tenths = ui_tenths;
+		Dashboard_UI_SubmitOdometer(ui_tenths);
+	}
+}
+
+static int32_t gps_scale_float_s32(float value, float scale,
+                                   int32_t minimum, int32_t maximum)
+{
+	float scaled;
+
+	if(value != value) return 0;
+	scaled = value * scale;
+	if(scaled <= (float)minimum) return minimum;
+	if(scaled >= (float)maximum) return maximum;
+	return (int32_t)(scaled + (scaled >= 0.0f ? 0.5f : -0.5f));
+}
+
+static uint16_t gps_angle_to_cdeg(float angle)
+{
+	int32_t scaled;
+
+	if(angle != angle) return 0U;
+	while(angle < 0.0f) angle += 360.0f;
+	while(angle >= 360.0f) angle -= 360.0f;
+	scaled = (int32_t)((angle * 100.0f) + 0.5f);
+	if(scaled >= 36000) scaled = 0;
+	return (uint16_t)scaled;
+}
+
+static uint16_t gps_clamp_u16(int32_t value)
+{
+	if(value <= 0) return 0U;
+	if(value >= 65535) return 65535U;
+	return (uint16_t)value;
+}
+
+static int16_t gps_clamp_i16(int32_t value)
+{
+	if(value <= -32768) return -32768;
+	if(value >= 32767) return 32767;
+	return (int16_t)value;
+}
+
+static uint8_t gps_clamp_u8(int32_t value)
+{
+	if(value <= 0) return 0U;
+	if(value >= 255) return 255U;
+	return (uint8_t)value;
+}
+
+static void gps_can_speed_tick(uint32_t now)
+{
+	int32_t speed_kmh_centi;
+	uint8_t speed_became_stale = 0U;
+	uint8_t rmc_valid;
+	GPS_Data_t gps_snapshot;
+	GPS_LapDiagnostic_t lap_diagnostic;
+	CAN_GPSTelemetry_t telemetry;
+
+	if((g_gps_rmc_last_tick == 0U) ||
+	   ((now - g_gps_rmc_last_tick) > GPS_CAN_SPEED_STALE_MS)) {
+		taskENTER_CRITICAL();
+		if((g_gps_speed_kmh_centi != 0) || (g_gps_speed_kmh_int != 0)) {
+			g_gps_speed_kmh_centi = 0;
+			g_gps_speed_kmh_int = 0;
+			speed_became_stale = 1U;
+		}
+		g_gps_rmc_valid = 0U;
+		taskEXIT_CRITICAL();
+	}
+	if(speed_became_stale != 0U) {
+		Dashboard_UI_SubmitSpeed(0);
+	}
+
+	if((g_gps_can_last_tick != 0U) &&
+	   ((now - g_gps_can_last_tick) < GPS_CAN_SPEED_PERIOD_MS)) {
+		return;
+	}
+	g_gps_can_last_tick = now;
+	taskENTER_CRITICAL();
+	speed_kmh_centi = g_gps_speed_kmh_centi;
+	rmc_valid = g_gps_rmc_valid;
+	taskEXIT_CRITICAL();
+	GPS_GetData(&gps_snapshot);
+	(void)memset(&lap_diagnostic, 0, sizeof(lap_diagnostic));
+	GPS_Lap_GetDiagnostic(&lap_diagnostic);
+
+	telemetry.latitude_e7 = gps_scale_float_s32(gps_snapshot.latitude, 10000000.0f,
+	                                           -900000000, 900000000);
+	telemetry.longitude_e7 = gps_scale_float_s32(gps_snapshot.longitude, 10000000.0f,
+	                                            -1800000000, 1800000000);
+	telemetry.ground_track_cdeg = gps_angle_to_cdeg(gps_snapshot.track_angle);
+	telemetry.heading_cdeg = gps_angle_to_cdeg(gps_snapshot.heading_angle);
+	telemetry.altitude_dm = gps_clamp_i16(
+		gps_scale_float_s32(gps_snapshot.altitude, 10.0f, -32768, 32767));
+	telemetry.status_flags = 0U;
+	if(gps_snapshot.valid != 0U) {
+		telemetry.status_flags |= GPS_CAN_STATUS_POSITION_VALID;
+	}
+	if(gps_snapshot.heading_valid != 0U) {
+		telemetry.status_flags |= GPS_CAN_STATUS_HEADING_VALID;
+	}
+	if(GPS_Lap_IsAnalysisActive() != 0U) {
+		telemetry.status_flags |= GPS_CAN_STATUS_LAP_ACTIVE;
+	}
+	if(rmc_valid != 0U) {
+		telemetry.status_flags |= GPS_CAN_STATUS_RMC_VALID;
+	}
+	telemetry.lap_diag_state = (uint8_t)lap_diagnostic.state;
+	telemetry.heading_quality = gps_snapshot.heading_quality;
+	telemetry.odometer_tenths_km = g_odometer_total_m / 100U;
+	telemetry.fix_quality = gps_snapshot.fix_quality;
+	telemetry.satellites = gps_snapshot.satellites;
+	telemetry.signal_level = gps_snapshot.signal_level;
+	telemetry.max_snr = gps_snapshot.max_snr;
+	telemetry.avg_snr = gps_snapshot.avg_snr;
+	telemetry.gsv_tracked_sats = gps_snapshot.gsv_tracked_sats;
+	telemetry.lap_count = gps_clamp_u8(GPS_Lap_GetCurrentLapNum());
+	telemetry.lap_current_cs = gps_clamp_u16(GPS_Lap_GetCurrentLapHundredths());
+	telemetry.lap_last_cs = gps_clamp_u16(GPS_Lap_GetLastLapHundredths());
+	telemetry.lap_best_cs = gps_clamp_u16(GPS_Lap_GetBestLapHundredths());
+	telemetry.lap_delta_cs = gps_clamp_i16(GPS_Lap_GetDeltaHundredths());
+
+	CAN_SendGPSSpeed((speed_kmh_centi + 5) / 10);
+	CAN_SendGPSTelemetry(&telemetry);
+}
 
 static uint8_t nmea_checksum(const char * sentence)
 {
@@ -394,13 +625,14 @@ static void parse_GNRMC(const char * sentence)
 	char stat[4];
 	nmea_get_field(sentence, 2, stat, sizeof(stat));
 	if(stat[0] != 'A') {
-		if(g_gps_speed_kmh_int != 0) {
-			taskENTER_CRITICAL();
-			g_gps_speed_kmh_int = 0;
-			g_gps_speed_kmh_centi = 0;
-			taskEXIT_CRITICAL();
-			Dashboard_UI_SubmitSpeed(0);
-		}
+		g_odometer_anchor_valid = 0U;
+		g_gps_rmc_last_tick = HAL_GetTick();
+		taskENTER_CRITICAL();
+		g_gps_speed_kmh_int = 0;
+		g_gps_speed_kmh_centi = 0;
+		g_gps_rmc_valid = 0U;
+		taskEXIT_CRITICAL();
+		Dashboard_UI_SubmitSpeed(0);
 		return;
 	}
 
@@ -414,6 +646,8 @@ static void parse_GNRMC(const char * sentence)
 	int32_t track_tenths = nmea_parse_track_int(sentence, 8);
 	float latitude = nmea_parse_coord_deg(sentence, 3, 4);
 	float longitude = nmea_parse_coord_deg(sentence, 5, 6);
+	uint32_t now = HAL_GetTick();
+	g_gps_rmc_last_tick = now;
 
 	taskENTER_CRITICAL();
 	/* Keep the RMC fast path lightweight; real GPS can deliver this at 20Hz. */
@@ -422,6 +656,7 @@ static void parse_GNRMC(const char * sentence)
 	g_gps_speed_kmh_int = speed_kmh;
 	g_gps_data.latitude = latitude;
 	g_gps_data.longitude = longitude;
+	g_gps_rmc_valid = 1U;
 	g_gps_rmc_count++;
 	taskEXIT_CRITICAL();
 
@@ -431,11 +666,7 @@ static void parse_GNRMC(const char * sentence)
 		GPS_GetData(&lap_data);
 		GPS_LapProcess(&lap_data);
 	}
-	uint32_t now = HAL_GetTick();
-	if((g_gps_speed_can_last_tick == 0U) || ((now - g_gps_speed_can_last_tick) >= 200U)) {
-		g_gps_speed_can_last_tick = now;
-		CAN_SendGPSSpeed((speed_kmh_centi + 5) / 10);
-	}
+	gps_odometer_process(latitude, longitude, speed_kmh_centi, now);
 }
 
 static void parse_GNGGA(const char * sentence)
@@ -488,6 +719,7 @@ static void parse_GNHPR(const char * sentence)
 	g_gps_data.heading_angle = heading;
 	g_gps_data.heading_quality = (uint8_t)quality;
 	g_gps_data.heading_valid = valid;
+	g_hpr_last_tick = HAL_GetTick();
 	taskEXIT_CRITICAL();
 }
 
@@ -591,9 +823,14 @@ static void GPS_SendCmd(const char * cmd)
 
 static void GPS_TaskFunc(void * argument)
 {
+	TickType_t last_wake_tick;
+
 	(void)argument;
 
 	vTaskDelay(pdMS_TO_TICKS(1500));
+	while(Dashboard_UI_IsStartupComplete() == 0U) {
+		vTaskDelay(pdMS_TO_TICKS(20));
+	}
 
 	GPS_SendCmd("UNLOG COM2");
 	vTaskDelay(pdMS_TO_TICKS(200));
@@ -603,7 +840,7 @@ static void GPS_TaskFunc(void * argument)
 	vTaskDelay(pdMS_TO_TICKS(100));
 	GPS_SendCmd("GPGGA 1");
 	vTaskDelay(pdMS_TO_TICKS(100));
-	GPS_SendCmd("GPRMC 0.2");
+	GPS_SendCmd("GPRMC 0.05");
 	vTaskDelay(pdMS_TO_TICKS(100));
 	GPS_SendCmd("GPHPR 0.2");
 	vTaskDelay(pdMS_TO_TICKS(100));
@@ -611,14 +848,16 @@ static void GPS_TaskFunc(void * argument)
 	vTaskDelay(pdMS_TO_TICKS(200));
 	GPS_SendCmd("SAVECONFIG");
 	vTaskDelay(pdMS_TO_TICKS(500));
+	last_wake_tick = xTaskGetTickCount();
 
 	for(;;) {
-		/* The RX DMA is circular.  A fixed polling period bounds GPS CPU load
-		 * and avoids coupling task scheduling to USART IDLE IRQ frequency. */
-		vTaskDelay(pdMS_TO_TICKS(20));
+		/* Ten-millisecond polling drains the circular DMA and provides a stable
+		 * time base for the independent 20 Hz CAN speed publisher. */
+		vTaskDelayUntil(&last_wake_tick, pdMS_TO_TICKS(10));
 
 		GPS_SentenceProcess();
 		invalidate_expired_gsv();
+		gps_can_speed_tick(HAL_GetTick());
 	}
 }
 
@@ -645,14 +884,22 @@ void GPS_Init(void)
 	g_gsv_window_max_snr = 0;
 	g_gsv_last_tick = 0;
 	g_gsv_signal_ui_last_tick = 0U;
-	g_gps_speed_can_last_tick = 0U;
 	g_gga_signal_level = GPS_SIG_LEVEL_NONE;
+	g_hpr_last_tick = 0U;
+	g_gps_rmc_last_tick = 0U;
+	g_gps_can_last_tick = 0U;
+	g_gps_rmc_valid = 0U;
+	/* Preserve the dashboard's startup placeholder until an RMC sentence is
+	 * actually received. The CAN publisher still uses the internal zero speed. */
+	gps_odometer_init();
 
 	BaseType_t ret = xTaskCreate(GPS_TaskFunc, "GPS_Task",
 	                             3072U, NULL,
 	                             tskIDLE_PRIORITY + 2,
 	                             &g_gps_task_handle);
-	(void)ret;
+	if(ret == pdPASS) {
+		SD_Odometer_StartTask();
+	}
 }
 
 void GPS_ISR_Notify(void)
@@ -668,5 +915,10 @@ void GPS_GetData(GPS_Data_t * out)
 	*out = g_gps_data;
 	out->speed_kmh = (float)g_gps_speed_kmh_centi / 100.0f;
 	out->track_angle = (float)g_gps_track_tenths / 10.0f;
+	if((out->heading_valid != 0U) &&
+	   ((g_hpr_last_tick == 0U) ||
+	    ((HAL_GetTick() - g_hpr_last_tick) > GPS_HPR_EXPIRE_MS))) {
+		out->heading_valid = 0U;
+	}
 	taskEXIT_CRITICAL();
 }

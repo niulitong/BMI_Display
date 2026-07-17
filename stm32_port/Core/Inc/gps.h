@@ -16,6 +16,10 @@
 #define GPS_SNR_FAIR       28
 #define GPS_SNR_WEAK       20
 
+/* GPHPR heading describes the ANT1-to-ANT2 baseline.  Set this offset to the
+ * clockwise angle from that baseline to the vehicle forward direction. */
+#define GPS_HEADING_INSTALL_OFFSET_DEG  0.0f
+
 typedef struct {
 	uint8_t  valid;
 	float    latitude;

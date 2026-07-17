@@ -57,7 +57,9 @@
 
 /* USER CODE BEGIN PV */
 static lv_display_t * g_lvgl_display;
-static uint16_t g_lvgl_draw_buf[800 * 10];
+/* Keep the verified 10-line main-SRAM buffer. The attempted 32-line CCMRAM
+ * buffer is intentionally not used until its hardware behavior can be tested. */
+static uint16_t g_lvgl_draw_buf[800U * 10U];
 volatile uint32_t g_lvgl_flush_count;
 
 /* USER CODE END PV */
@@ -139,23 +141,42 @@ static void LCD_SetAddressWindow(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t
   LCD_REG = 0x2C;
 }
 
-static void LCD_WritePixels(const uint16_t * colors, uint32_t pixel_count)
+/* The Debug configuration builds at -O0. Keep the hot FSMC pixel loop locally
+ * optimized so UI refresh bandwidth does not depend on the IDE build profile. */
+static void __attribute__((optimize("O3")))
+LCD_WritePixels(const uint16_t * colors, uint32_t pixel_count)
 {
-  uint32_t index;
-
-  for(index = 0; index < pixel_count; index++) {
-    LCD_DATA = colors[index];
+  while(pixel_count >= 8U) {
+    LCD_DATA = *colors++;
+    LCD_DATA = *colors++;
+    LCD_DATA = *colors++;
+    LCD_DATA = *colors++;
+    LCD_DATA = *colors++;
+    LCD_DATA = *colors++;
+    LCD_DATA = *colors++;
+    LCD_DATA = *colors++;
+    pixel_count -= 8U;
   }
+  while(pixel_count > 0U) {
+    LCD_DATA = *colors++;
+    pixel_count--;
+  }
+}
+
+static void LCD_Backlight_SetEnabled(uint8_t enabled)
+{
+  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_9,
+                   (enabled != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
 static void LCD_Backlight_On(void)
 {
-  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_9, GPIO_PIN_SET);
+  LCD_Backlight_SetEnabled(1U);
 }
 
 static void LCD_Backlight_Off(void)
 {
-  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_9, GPIO_PIN_RESET);
+  LCD_Backlight_SetEnabled(0U);
 }
 
 static void SSD1963_Reset_Assert(void)
@@ -292,6 +313,8 @@ void SSD1963_Init(void) {
     LCD_REG = 0xD0;
     LCD_DATA = 0x00;
 
+    /* Keep the module's existing SSD1963 PWM setup. The current PCB uses PF9
+     * as a binary backlight enable. */
     LCD_REG = 0xBE;
     LCD_DATA = 0x05;
     LCD_DATA = 0xFE;
@@ -372,7 +395,9 @@ int main(void)
   if(HAL_CAN_Start(&hcan1) != HAL_OK) {
     Error_Handler();
   }
-  if(HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
+  if(HAL_CAN_ActivateNotification(&hcan1,
+                                  CAN_IT_RX_FIFO0_MSG_PENDING |
+                                  CAN_IT_TX_MAILBOX_EMPTY) != HAL_OK) {
     Error_Handler();
   }
 
@@ -387,8 +412,8 @@ int main(void)
   LED_Diag_SetBootStage(1);
   LVGL_Port_Init();
   HAL_Delay(10);
-  LCD_Backlight_On();
   SD_Log_InitAndWrite(Dashboard_UI_GetCurrentData());
+  LCD_Backlight_On();
 #endif
   /* USER CODE END 2 */
 

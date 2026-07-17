@@ -54,6 +54,15 @@ extern volatile uint32_t g_lvgl_flush_count;
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
+#define DASHBOARD_TASK_STACK_WORDS 2048U
+
+static StaticTask_t g_dashboard_task_control;
+static StackType_t g_dashboard_task_stack[DASHBOARD_TASK_STACK_WORDS];
+static TaskHandle_t g_dashboard_task_handle;
+
+volatile uint32_t g_freertos_fault_code;
+volatile const char * g_freertos_fault_task_name;
+
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -74,6 +83,8 @@ const osThreadAttr_t touchTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+
+static void Dashboard_ServiceTask(void * argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -133,23 +144,61 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
+  (void)argument;
+
+  /* The generated 4 KiB default task is only a bootstrap. LVGL rendering now
+   * uses a dedicated 8 KiB static stack so a downward stack overflow cannot
+   * overwrite the FreeRTOS timer queue placed immediately below ucHeap. */
+  g_dashboard_task_handle = xTaskCreateStatic(Dashboard_ServiceTask,
+                                               "Dashboard",
+                                               DASHBOARD_TASK_STACK_WORDS,
+                                               NULL,
+                                               (UBaseType_t)osPriorityNormal,
+                                               g_dashboard_task_stack,
+                                               &g_dashboard_task_control);
+  if(g_dashboard_task_handle == NULL) {
+    taskDISABLE_INTERRUPTS();
+    g_freertos_fault_code = 4U;
+    g_freertos_fault_task_name = "Dashboard";
+    HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_SET);
+    for(;;) { }
+  }
+
+  vTaskDelete(NULL);
+  /* Execution must not continue after deleting the bootstrap task. */
+  for(;;) { }
+  /* USER CODE END StartDefaultTask */
+}
+
+/* Private application code --------------------------------------------------*/
+/* USER CODE BEGIN Application */
+
+static void Dashboard_ServiceTask(void * argument)
+{
   uint32_t delay_ms;
   uint32_t last_heartbeat_tick = 0U;
   uint32_t last_flush_count = 0U;
   uint32_t last_can_heartbeat_tick = 0U;
 
+  (void)argument;
+
   for(;;)
   {
-    Touch_Process();
     Dashboard_UI_Process();
+    if(Dashboard_UI_IsStartupComplete() != 0U) {
+      Touch_Process();
+    }
     delay_ms = lv_timer_handler();
 
-    if((HAL_GetTick() - last_heartbeat_tick) >= 250U) {
+    if((Dashboard_UI_IsStartupComplete() != 0U) &&
+       ((HAL_GetTick() - last_heartbeat_tick) >= 250U)) {
       last_heartbeat_tick = HAL_GetTick();
       HAL_GPIO_TogglePin(GPIOD, LED_GREEN_Pin);
     }
 
-    if((HAL_GetTick() - last_can_heartbeat_tick) >= 500U) {
+    if((Dashboard_UI_IsStartupComplete() != 0U) &&
+       ((HAL_GetTick() - last_can_heartbeat_tick) >= 500U)) {
       last_can_heartbeat_tick = HAL_GetTick();
       CAN1_SendHeartbeat();
     }
@@ -164,21 +213,43 @@ void StartDefaultTask(void *argument)
     if(delay_ms > 20U) {
       delay_ms = 20U;
     }
+    if((Dashboard_UI_IsStartupComplete() == 0U) && (delay_ms > 16U)) {
+      delay_ms = 16U;
+    }
 
     osDelay(delay_ms);
   }
-  /* USER CODE END StartDefaultTask */
 }
-
-/* Private application code --------------------------------------------------*/
-/* USER CODE BEGIN Application */
 
 void Fault_Diagnostic_Assert(void)
 {
+  g_freertos_fault_code = 1U;
+  g_freertos_fault_task_name = "configASSERT";
   /* Both LEDs solid identifies a FreeRTOS configASSERT.  CPU fault handlers
    * use red solid / green off instead. */
   HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_SET);
+}
+
+void vApplicationStackOverflowHook(TaskHandle_t task, char * task_name)
+{
+  (void)task;
+  taskDISABLE_INTERRUPTS();
+  g_freertos_fault_code = 2U;
+  g_freertos_fault_task_name = task_name;
+  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_RESET);
+  for(;;) { }
+}
+
+void vApplicationMallocFailedHook(void)
+{
+  taskDISABLE_INTERRUPTS();
+  g_freertos_fault_code = 3U;
+  g_freertos_fault_task_name = "FreeRTOS heap";
+  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_SET);
+  for(;;) { }
 }
 
 /* USER CODE END Application */

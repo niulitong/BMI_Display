@@ -67,12 +67,27 @@ typedef struct {
 	int32_t odometer_tenths;
 	/* 非DBC: 制动百分比 */
 	int32_t brake_pct;
+	/* Vehicle_CanB.dbc BO_1792: SlipLevel 0..7 */
+	int32_t slip_level;
 } dashboard_data_t;
 
 void Dashboard_UI_Init(void);
 void Dashboard_UI_Process(void);
+/* Compatibility hook: the dashboard is ready immediately after initialization. */
+uint8_t Dashboard_UI_IsStartupComplete(void);
 void Dashboard_UI_SubmitData(const dashboard_data_t * data);
+/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR; temperature order: outside-to-inside. */
+void Dashboard_UI_SubmitTireTemperatures(uint32_t wheel_index,
+                                         const int32_t temperatures[4]);
+/* Same wheel/segment order, with each value expressed in 0.01 degC. */
+void Dashboard_UI_SubmitTireTemperaturesCenti(uint32_t wheel_index,
+                                              const int32_t temperatures_centi[4]);
 void Dashboard_UI_SubmitSpeed(int32_t speed);
+void Dashboard_UI_SubmitOdometer(int32_t odometer_tenths);
+void Dashboard_UI_SubmitDriveMode(int32_t mode_index);
+void Dashboard_UI_SubmitSlipLevel(int32_t slip_level);
+void Dashboard_UI_RequestLapToggle(void);
+void Dashboard_UI_RequestAlertClear(void);
 void Dashboard_UI_SubmitLapDelta(int32_t delta_hundredths);
 void Dashboard_UI_SubmitLapTimes(int32_t current_hundredths,
 								 int32_t last_hundredths,

@@ -21,13 +21,17 @@ typedef struct {
     lv_obj_t * speed_digit_container;
     lv_obj_t * speed_segments[2][7];
     lv_obj_t * speed_unit;
+    lv_obj_t * mode_tile;
     lv_obj_t * mode_value;
+    lv_obj_t * slip_value;
+    lv_obj_t * slip_bars[8];
     lv_obj_t * soc_value;
     lv_obj_t * battery_fill;
     lv_obj_t * wheel_fl;
     lv_obj_t * wheel_fr;
     lv_obj_t * wheel_rl;
     lv_obj_t * wheel_rr;
+    lv_obj_t * tire_max_labels[4];
     lv_obj_t * lightning_fl;
     lv_obj_t * lightning_fr;
     lv_obj_t * lightning_rl;
@@ -96,6 +100,8 @@ typedef enum {
 } drive_mode_t;
 
 static drive_mode_t g_drive_mode = DRIVE_MODE_S;
+static int g_slip_level = 0;
+static bool g_lap_recording_active = false;
 static int speed = 0;
 static int SOC = 72;
 static int Mode_Index = 0;
@@ -120,10 +126,13 @@ static int Top_Temperature = 46;
 static int Sum_I = 15;
 static int Power_Live = 12;
 static int Power_Peak = 36;
-static int Tire_Temp_FL = 35;
-static int Tire_Temp_FR = 48;
-static int Tire_Temp_RL = 58;
-static int Tire_Temp_RR = 66;
+/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR; segment order is outside-to-inside. */
+static int Tire_Temp[4][4] = {
+    {32, 46, 60, 76},
+    {35, 49, 63, 79},
+    {30, 44, 58, 74},
+    {38, 52, 66, 80}
+};
 static bool Motor_FL_Online = false;
 static bool Motor_FR_Online = true;
 static bool Motor_RL_Online = false;
@@ -184,6 +193,12 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define UI_SPEED_DIGIT_H 140
 #define UI_SPEED_SEG_THICKNESS 12
 #define UI_SPEED_DIGIT_GAP 18
+#define UI_TIRE_WIDTH 42
+#define UI_TIRE_HEIGHT 54
+#define UI_TIRE_LEFT_X 32
+#define UI_TIRE_RIGHT_X 106
+#define UI_TIRE_FRONT_Y 148
+#define UI_TIRE_REAR_Y 208
 
 static lv_color_t temp_to_color(int32_t temp)
 {
@@ -194,68 +209,129 @@ static lv_color_t temp_to_color(int32_t temp)
     return lv_color_mix(lv_palette_main(LV_PALETTE_RED), lv_palette_main(LV_PALETTE_GREEN), mix);
 }
 
+/* Match the MCU implementation: draw the four bands without child objects. */
+static void tire_draw_event_cb(lv_event_t * event)
+{
+    lv_obj_t * wheel = lv_event_get_current_target_obj(event);
+    lv_layer_t * layer = lv_event_get_layer(event);
+    lv_area_t wheel_coords;
+    lv_draw_rect_dsc_t rect_dsc;
+    int wheel_index = -1;
+
+    if(wheel == g_dashboard.wheel_fl) wheel_index = 0;
+    else if(wheel == g_dashboard.wheel_rl) wheel_index = 1;
+    else if(wheel == g_dashboard.wheel_fr) wheel_index = 2;
+    else if(wheel == g_dashboard.wheel_rr) wheel_index = 3;
+    if((wheel_index < 0) || (layer == NULL)) return;
+
+    lv_obj_get_coords(wheel, &wheel_coords);
+    lv_draw_rect_dsc_init(&rect_dsc);
+    rect_dsc.bg_opa = LV_OPA_COVER;
+    rect_dsc.border_opa = LV_OPA_TRANSP;
+    rect_dsc.radius = 0;
+
+    for(uint32_t segment = 0U; segment < 4U; segment++) {
+        uint32_t visual_segment = (wheel_index < 2) ? segment : (3U - segment);
+        lv_coord_t inner_x1 = wheel_coords.x1 + 1;
+        lv_coord_t inner_width = (wheel_coords.x2 - wheel_coords.x1 + 1) - 2;
+        lv_area_t segment_coords = {
+            .x1 = inner_x1 + (lv_coord_t)((visual_segment * (uint32_t)inner_width) / 4U),
+            .y1 = wheel_coords.y1 + 1,
+            .x2 = inner_x1 + (lv_coord_t)(((visual_segment + 1U) * (uint32_t)inner_width) / 4U) - 1,
+            .y2 = wheel_coords.y2 - 1
+        };
+        rect_dsc.bg_color = temp_to_color(Tire_Temp[wheel_index][segment]);
+        lv_draw_rect(layer, &rect_dsc, &segment_coords);
+    }
+}
+
 static void apply_vehicle_ui(void)
 {
-    lv_color_t fl = temp_to_color(Tire_Temp_FL);
-    lv_color_t fr = temp_to_color(Tire_Temp_FR);
-    lv_color_t rl = temp_to_color(Tire_Temp_RL);
-    lv_color_t rr = temp_to_color(Tire_Temp_RR);
+    lv_obj_t * lightning[4] = {
+        g_dashboard.lightning_fl, g_dashboard.lightning_rl,
+        g_dashboard.lightning_fr, g_dashboard.lightning_rr
+    };
+    bool online[4] = {
+        Motor_FL_Online, Motor_RL_Online, Motor_FR_Online, Motor_RR_Online
+    };
+    char text_buf[12];
 
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fl, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_fl, fl, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_fl, fl, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_fl, LV_GRAD_DIR_VER, 0);
+    for(uint32_t wheel = 0U; wheel < 4U; wheel++) {
+        int maximum_temp = Tire_Temp[wheel][0];
+        for(uint32_t segment = 0U; segment < 4U; segment++) {
+            if(Tire_Temp[wheel][segment] > maximum_temp) {
+                maximum_temp = Tire_Temp[wheel][segment];
+            }
+        }
+        lv_obj_invalidate(wheel == 0U ? g_dashboard.wheel_fl :
+                          wheel == 1U ? g_dashboard.wheel_rl :
+                          wheel == 2U ? g_dashboard.wheel_fr : g_dashboard.wheel_rr);
+        lv_snprintf(text_buf, sizeof(text_buf), "%d°", maximum_temp);
+        lv_label_set_text(g_dashboard.tire_max_labels[wheel], text_buf);
+        if(wheel < 2U) {
+            lv_obj_t * tire = (wheel == 0U) ? g_dashboard.wheel_fl : g_dashboard.wheel_rl;
+            lv_obj_update_layout(g_dashboard.tire_max_labels[wheel]);
+            lv_obj_align_to(g_dashboard.tire_max_labels[wheel], tire,
+                            LV_ALIGN_OUT_LEFT_MID, -4, -11);
+            if(lv_obj_get_x(g_dashboard.tire_max_labels[wheel]) < 1) {
+                lv_obj_set_x(g_dashboard.tire_max_labels[wheel], 1);
+            }
+        }
+        if(online[wheel]) lv_obj_clear_flag(lightning[wheel], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(lightning[wheel], LV_OBJ_FLAG_HIDDEN);
+    }
 
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fr, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_fr, fr, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_fr, fr, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_fr, LV_GRAD_DIR_VER, 0);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rl, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_rl, rl, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_rl, rl, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_rl, LV_GRAD_DIR_VER, 0);
-
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rr, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(g_dashboard.wheel_rr, rr, 0);
-    lv_obj_set_style_bg_grad_color(g_dashboard.wheel_rr, rr, 0);
-    lv_obj_set_style_bg_grad_dir(g_dashboard.wheel_rr, LV_GRAD_DIR_VER, 0);
-
-    if(Motor_FL_Online) lv_obj_clear_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_fl, LV_OBJ_FLAG_HIDDEN);
-    if(Motor_FR_Online) lv_obj_clear_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_fr, LV_OBJ_FLAG_HIDDEN);
-    if(Motor_RL_Online) lv_obj_clear_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_rl, LV_OBJ_FLAG_HIDDEN);
-    if(Motor_RR_Online) lv_obj_clear_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(g_dashboard.lightning_rr, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void apply_drive_mode_ui(void)
 {
-    if(g_dashboard.mode_value == NULL) return;
+    const char * mode_text = "S";
+    lv_color_t tile_color = lv_palette_main(LV_PALETTE_RED);
 
     switch(g_drive_mode) {
         case DRIVE_MODE_S:
-            lv_label_set_text(g_dashboard.mode_value, "S");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_RED), 0);
+            mode_text = "S";
+            tile_color = lv_palette_main(LV_PALETTE_RED);
             break;
         case DRIVE_MODE_Q:
-            lv_label_set_text(g_dashboard.mode_value, "Q");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_color_hex(0xFFD400), 0);
+            mode_text = "Q";
+            tile_color = lv_color_hex(0xFFD400);
             break;
         case DRIVE_MODE_C:
-            lv_label_set_text(g_dashboard.mode_value, "C");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_BLUE), 0);
+            mode_text = "C";
+            tile_color = lv_palette_main(LV_PALETTE_BLUE);
             break;
         case DRIVE_MODE_E:
-            lv_label_set_text(g_dashboard.mode_value, "E");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_GREEN), 0);
+            mode_text = "E";
+            tile_color = lv_palette_main(LV_PALETTE_GREEN);
             break;
         default:
-            lv_label_set_text(g_dashboard.mode_value, "S");
-            lv_obj_set_style_text_color(g_dashboard.mode_value, lv_palette_main(LV_PALETTE_RED), 0);
             break;
+    }
+
+    if(g_dashboard.mode_tile != NULL) {
+        lv_obj_set_style_bg_color(g_dashboard.mode_tile, tile_color, 0);
+    }
+    if(g_dashboard.mode_value != NULL) {
+        lv_label_set_text(g_dashboard.mode_value, mode_text);
+        lv_obj_set_style_text_color(g_dashboard.mode_value, lv_color_white(), 0);
+    }
+}
+
+static void update_slip_level_ui(void)
+{
+    char text_buf[16];
+
+    if(g_dashboard.slip_value == NULL) return;
+
+    lv_snprintf(text_buf, sizeof(text_buf), "SLIP %d", g_slip_level);
+    lv_label_set_text(g_dashboard.slip_value, text_buf);
+    for(uint32_t index = 0U; index < 8U; index++) {
+        if(g_dashboard.slip_bars[index] == NULL) continue;
+        lv_obj_set_style_bg_color(g_dashboard.slip_bars[index],
+                                  (index <= (uint32_t)g_slip_level) ?
+                                  UI_TEXT_COLOR : UI_SEGMENT_OFF_COLOR, 0);
+        lv_obj_set_style_bg_opa(g_dashboard.slip_bars[index], LV_OPA_COVER, 0);
     }
 }
 
@@ -372,10 +448,43 @@ static void sync_mode_from_index(void)
     }
 }
 
+static void simulator_set_drive_mode(int mode_index)
+{
+    if(mode_index < DRIVE_MODE_S || mode_index > DRIVE_MODE_E) return;
+
+    Mode_Index = mode_index;
+    sync_mode_from_index();
+    apply_drive_mode_ui();
+    update_layout_by_mode();
+}
+
+static void simulator_set_slip_level(int slip_level)
+{
+    if(slip_level < 0 || slip_level > 7) return;
+
+    g_slip_level = slip_level;
+    update_slip_level_ui();
+}
+
+static void simulator_toggle_lap_recording(void)
+{
+    g_lap_recording_active = !g_lap_recording_active;
+    if(g_dashboard.alert_circle == NULL) return;
+
+    if(g_lap_recording_active) {
+        lv_obj_set_style_bg_color(g_dashboard.alert_circle, lv_color_make(0xFF, 0x1A, 0x1A), 0);
+        lv_obj_clear_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
+    }
+    else {
+        lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void mode_key_event_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_KEY) return;
 
+    /* S/Q/C/E or space: mode; 0..7: SLIP; R: lap-recording indicator. */
     uint32_t key = lv_event_get_key(e);
     if(key == LV_KEY_ESC || key == 'x' || key == 'X') {
         g_simulator_exit_requested = true;
@@ -384,26 +493,29 @@ static void mode_key_event_cb(lv_event_t * e)
 
     if(key == ' ') {
         // 空格键：循环切换模式
-        g_drive_mode = (g_drive_mode + 1) % 4;
+        simulator_set_drive_mode((Mode_Index + 1) % 4);
     }
     else if(key == 's' || key == 'S') {
-        g_drive_mode = DRIVE_MODE_S;
+        simulator_set_drive_mode(DRIVE_MODE_S);
     }
     else if(key == 'q' || key == 'Q') {
-        g_drive_mode = DRIVE_MODE_Q;
+        simulator_set_drive_mode(DRIVE_MODE_Q);
     }
     else if(key == 'e' || key == 'E') {
-        g_drive_mode = DRIVE_MODE_E;
+        simulator_set_drive_mode(DRIVE_MODE_E);
     }
     else if(key == 'c' || key == 'C') {
-        g_drive_mode = DRIVE_MODE_C;
+        simulator_set_drive_mode(DRIVE_MODE_C);
+    }
+    else if(key >= '0' && key <= '7') {
+        simulator_set_slip_level((int)(key - '0'));
+    }
+    else if(key == 'r' || key == 'R') {
+        simulator_toggle_lap_recording();
     }
     else {
         return;
     }
-
-    apply_drive_mode_ui();
-    update_layout_by_mode();
 }
 
 // ........................................................................................................
@@ -904,70 +1016,118 @@ void create_main_dashboard_screen(void)
     lv_obj_t * vehicle_box = create_panel(middle_panel, 0, 0, UI_LEFT_PANEL_WIDTH, UI_MIDDLE_HEIGHT - 9, UI_BG_COLOR, LV_OPA_COVER);
     lv_obj_set_style_border_width(vehicle_box, 0, 0);
 
-    g_dashboard.mode_value = lv_label_create(vehicle_box);
-    lv_obj_set_style_text_font(g_dashboard.mode_value, &lv_font_montserrat_48, 0);
-    lv_obj_align(g_dashboard.mode_value, LV_ALIGN_TOP_MID, 0, 12);
+    g_dashboard.mode_tile = create_panel(vehicle_box, 52, 10, 76, 76,
+                                         lv_palette_main(LV_PALETTE_RED), LV_OPA_COVER);
+    lv_obj_set_style_border_width(g_dashboard.mode_tile, 2, 0);
+    lv_obj_set_style_radius(g_dashboard.mode_tile, 0, 0);
+
+    g_dashboard.mode_value = lv_label_create(g_dashboard.mode_tile);
+    lv_obj_set_style_text_font(g_dashboard.mode_value, &lv_font_montserrat_32, 0);
+    lv_obj_align(g_dashboard.mode_value, LV_ALIGN_CENTER, 0, 0);
     apply_drive_mode_ui();
+
+    g_dashboard.slip_value = lv_label_create(vehicle_box);
+    lv_label_set_text(g_dashboard.slip_value, "SLIP 0");
+    lv_obj_set_style_text_color(g_dashboard.slip_value, UI_TEXT_COLOR, 0);
+    lv_obj_set_style_text_font(g_dashboard.slip_value, &lv_font_montserrat_18, 0);
+    lv_obj_set_pos(g_dashboard.slip_value, 55, 101);
+    for(uint32_t index = 0U; index < 8U; index++) {
+        g_dashboard.slip_bars[index] =
+            create_panel(vehicle_box, 12 + (lv_coord_t)(index * 20U), 132,
+                         14, 6, UI_SEGMENT_OFF_COLOR, LV_OPA_COVER);
+        lv_obj_set_style_border_width(g_dashboard.slip_bars[index], 0, 0);
+    }
+    update_slip_level_ui();
 
     g_dashboard.wheel_fl = lv_obj_create(vehicle_box);
     lv_obj_remove_style_all(g_dashboard.wheel_fl);
-    lv_obj_set_pos(g_dashboard.wheel_fl, 30, 160);
-    lv_obj_set_size(g_dashboard.wheel_fl, 24, 54);
-    lv_obj_set_style_radius(g_dashboard.wheel_fl, 3, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fl, LV_OPA_TRANSP, 0);
+    lv_obj_set_pos(g_dashboard.wheel_fl, UI_TIRE_LEFT_X, UI_TIRE_FRONT_Y);
+    lv_obj_set_size(g_dashboard.wheel_fl, UI_TIRE_WIDTH, UI_TIRE_HEIGHT);
+    lv_obj_set_style_radius(g_dashboard.wheel_fl, 2, 0);
+    lv_obj_set_style_bg_opa(g_dashboard.wheel_fl, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(g_dashboard.wheel_fl, UI_BG_COLOR, 0);
     lv_obj_set_style_border_width(g_dashboard.wheel_fl, 1, 0);
     lv_obj_set_style_border_color(g_dashboard.wheel_fl, UI_BORDER_COLOR, 0);
 
     g_dashboard.lightning_fl = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_fl, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_fl, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_style_text_font(g_dashboard.lightning_fl, &lv_font_montserrat_24, 0);
-    lv_obj_align_to(g_dashboard.lightning_fl, g_dashboard.wheel_fl, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_fl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_transform_scale(g_dashboard.lightning_fl, 288, 0);
+    lv_obj_align_to(g_dashboard.lightning_fl, g_dashboard.wheel_fl, LV_ALIGN_OUT_LEFT_MID, -2, 12);
 
     g_dashboard.wheel_fr = lv_obj_create(vehicle_box);
     lv_obj_remove_style_all(g_dashboard.wheel_fr);
-    lv_obj_set_pos(g_dashboard.wheel_fr, 120, 160);
-    lv_obj_set_size(g_dashboard.wheel_fr, 24, 54);
-    lv_obj_set_style_radius(g_dashboard.wheel_fr, 3, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_fr, LV_OPA_TRANSP, 0);
+    lv_obj_set_pos(g_dashboard.wheel_fr, UI_TIRE_RIGHT_X, UI_TIRE_FRONT_Y);
+    lv_obj_set_size(g_dashboard.wheel_fr, UI_TIRE_WIDTH, UI_TIRE_HEIGHT);
+    lv_obj_set_style_radius(g_dashboard.wheel_fr, 2, 0);
+    lv_obj_set_style_bg_opa(g_dashboard.wheel_fr, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(g_dashboard.wheel_fr, UI_BG_COLOR, 0);
     lv_obj_set_style_border_width(g_dashboard.wheel_fr, 1, 0);
     lv_obj_set_style_border_color(g_dashboard.wheel_fr, UI_BORDER_COLOR, 0);
 
     g_dashboard.lightning_fr = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_fr, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_fr, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_style_text_font(g_dashboard.lightning_fr, &lv_font_montserrat_24, 0);
-    lv_obj_align_to(g_dashboard.lightning_fr, g_dashboard.wheel_fr, LV_ALIGN_OUT_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_fr, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_transform_scale(g_dashboard.lightning_fr, 288, 0);
+    lv_obj_align_to(g_dashboard.lightning_fr, g_dashboard.wheel_fr, LV_ALIGN_OUT_RIGHT_MID, 2, 12);
 
     g_dashboard.wheel_rl = lv_obj_create(vehicle_box);
     lv_obj_remove_style_all(g_dashboard.wheel_rl);
-    lv_obj_set_pos(g_dashboard.wheel_rl, 30, 280);
-    lv_obj_set_size(g_dashboard.wheel_rl, 24, 54);
-    lv_obj_set_style_radius(g_dashboard.wheel_rl, 3, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rl, LV_OPA_TRANSP, 0);
+    lv_obj_set_pos(g_dashboard.wheel_rl, UI_TIRE_LEFT_X, UI_TIRE_REAR_Y);
+    lv_obj_set_size(g_dashboard.wheel_rl, UI_TIRE_WIDTH, UI_TIRE_HEIGHT);
+    lv_obj_set_style_radius(g_dashboard.wheel_rl, 2, 0);
+    lv_obj_set_style_bg_opa(g_dashboard.wheel_rl, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(g_dashboard.wheel_rl, UI_BG_COLOR, 0);
     lv_obj_set_style_border_width(g_dashboard.wheel_rl, 1, 0);
     lv_obj_set_style_border_color(g_dashboard.wheel_rl, UI_BORDER_COLOR, 0);
 
     g_dashboard.lightning_rl = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_rl, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_rl, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_style_text_font(g_dashboard.lightning_rl, &lv_font_montserrat_24, 0);
-    lv_obj_align_to(g_dashboard.lightning_rl, g_dashboard.wheel_rl, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_rl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_transform_scale(g_dashboard.lightning_rl, 288, 0);
+    lv_obj_align_to(g_dashboard.lightning_rl, g_dashboard.wheel_rl, LV_ALIGN_OUT_LEFT_MID, -2, 12);
 
     g_dashboard.wheel_rr = lv_obj_create(vehicle_box);
     lv_obj_remove_style_all(g_dashboard.wheel_rr);
-    lv_obj_set_pos(g_dashboard.wheel_rr, 120, 280);
-    lv_obj_set_size(g_dashboard.wheel_rr, 24, 54);
-    lv_obj_set_style_radius(g_dashboard.wheel_rr, 3, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.wheel_rr, LV_OPA_TRANSP, 0);
+    lv_obj_set_pos(g_dashboard.wheel_rr, UI_TIRE_RIGHT_X, UI_TIRE_REAR_Y);
+    lv_obj_set_size(g_dashboard.wheel_rr, UI_TIRE_WIDTH, UI_TIRE_HEIGHT);
+    lv_obj_set_style_radius(g_dashboard.wheel_rr, 2, 0);
+    lv_obj_set_style_bg_opa(g_dashboard.wheel_rr, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(g_dashboard.wheel_rr, UI_BG_COLOR, 0);
     lv_obj_set_style_border_width(g_dashboard.wheel_rr, 1, 0);
     lv_obj_set_style_border_color(g_dashboard.wheel_rr, UI_BORDER_COLOR, 0);
 
     g_dashboard.lightning_rr = lv_label_create(vehicle_box);
     lv_label_set_text(g_dashboard.lightning_rr, LV_SYMBOL_CHARGE);
     lv_obj_set_style_text_color(g_dashboard.lightning_rr, lv_color_hex(0xFFD400), 0);
-    lv_obj_set_style_text_font(g_dashboard.lightning_rr, &lv_font_montserrat_24, 0);
-    lv_obj_align_to(g_dashboard.lightning_rr, g_dashboard.wheel_rr, LV_ALIGN_OUT_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_font(g_dashboard.lightning_rr, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_transform_scale(g_dashboard.lightning_rr, 288, 0);
+    lv_obj_align_to(g_dashboard.lightning_rr, g_dashboard.wheel_rr, LV_ALIGN_OUT_RIGHT_MID, 2, 12);
+
+    {
+        lv_obj_t * tire_wheels[4] = {
+            g_dashboard.wheel_fl, g_dashboard.wheel_rl,
+            g_dashboard.wheel_fr, g_dashboard.wheel_rr
+        };
+        for(uint32_t wheel = 0U; wheel < 4U; wheel++) {
+            lv_obj_add_event_cb(tire_wheels[wheel], tire_draw_event_cb, LV_EVENT_DRAW_MAIN, NULL);
+            g_dashboard.tire_max_labels[wheel] = lv_label_create(vehicle_box);
+            lv_label_set_text(g_dashboard.tire_max_labels[wheel], "0°");
+            lv_obj_set_style_text_color(g_dashboard.tire_max_labels[wheel], UI_TEXT_COLOR, 0);
+            lv_obj_set_style_text_font(g_dashboard.tire_max_labels[wheel], &lv_font_montserrat_16, 0);
+        }
+        lv_obj_align_to(g_dashboard.tire_max_labels[0], g_dashboard.wheel_fl,
+                        LV_ALIGN_OUT_LEFT_MID, -2, -11);
+        lv_obj_align_to(g_dashboard.tire_max_labels[1], g_dashboard.wheel_rl,
+                        LV_ALIGN_OUT_LEFT_MID, -2, -11);
+        lv_obj_align_to(g_dashboard.tire_max_labels[2], g_dashboard.wheel_fr,
+                        LV_ALIGN_OUT_RIGHT_MID, 2, -11);
+        lv_obj_align_to(g_dashboard.tire_max_labels[3], g_dashboard.wheel_rr,
+                        LV_ALIGN_OUT_RIGHT_MID, 2, -11);
+    }
 
     apply_vehicle_ui();
 
@@ -1260,6 +1420,7 @@ void create_main_dashboard_screen(void)
         lv_obj_set_style_radius(g_dashboard.alert_circle, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(g_dashboard.alert_circle, lv_color_make(0xFF, 0x1A, 0x1A), 0);
         lv_obj_set_style_bg_opa(g_dashboard.alert_circle, LV_OPA_COVER, 0);
+        lv_obj_add_flag(g_dashboard.alert_circle, LV_OBJ_FLAG_HIDDEN);
 
         g_dashboard.odometer_label = lv_label_create(screen);
         lv_obj_set_pos(g_dashboard.odometer_label, circle_x + circle_d + 12, circle_y - 3);
@@ -1478,10 +1639,20 @@ static void update_main_dashboard_demo(void)
     lv_snprintf(soc_buf, sizeof(soc_buf), "%ld", (long)Motor_Temp[3]);
     lv_label_set_text(g_dashboard.motor_rr_temp, soc_buf);
 
-    Tire_Temp_FL = 30 + speed / 2;
-    Tire_Temp_FR = 36 + speed / 2;
-    Tire_Temp_RL = 42 + speed / 2;
-    Tire_Temp_RR = 48 + speed / 2;
+    {
+        static const int segment_offset[4] = {-3, -1, 1, 3};
+        int base_temp[4] = {
+            30 + speed / 2,
+            42 + speed / 2,
+            36 + speed / 2,
+            48 + speed / 2
+        };
+        for(uint32_t wheel = 0U; wheel < 4U; wheel++) {
+            for(uint32_t segment = 0U; segment < 4U; segment++) {
+                Tire_Temp[wheel][segment] = base_temp[wheel] + segment_offset[segment];
+            }
+        }
+    }
 
     Motor_FL_Online = ((speed / 10) % 2) != 0;
     Motor_FR_Online = ((speed / 12) % 2) != 0;

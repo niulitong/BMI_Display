@@ -84,6 +84,25 @@ void MX_FSMC_Init(void)
 
   /* USER CODE BEGIN FSMC_Init 2 */
 
+  /* Startup cross-fade write timing, moderate profile.
+   * Keep the generated read timing untouched and shorten only the extended
+   * write cycle from 5/15/15 to 3/8/1 HCLK cycles. This is deliberately less
+   * aggressive than the previously tested 2/6/0 profile. */
+  ExtTiming.AddressSetupTime = 3;
+  ExtTiming.AddressHoldTime = 2;
+  ExtTiming.DataSetupTime = 8;
+  ExtTiming.BusTurnAroundDuration = 1;
+  ExtTiming.CLKDivision = 16;
+  ExtTiming.DataLatency = 17;
+  ExtTiming.AccessMode = FSMC_ACCESS_MODE_A;
+  if(FSMC_NORSRAM_Extended_Timing_Init(hsram1.Extended,
+                                       &ExtTiming,
+                                       hsram1.Init.NSBank,
+                                       hsram1.Init.ExtendedMode) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
   /* USER CODE END FSMC_Init 2 */
 }
 

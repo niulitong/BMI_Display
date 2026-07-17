@@ -69,7 +69,9 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /** Size of memory available for `lv_malloc()` in bytes (>= 2kB) */
-    #define LV_MEM_SIZE (32 * 1024U)          /**< [bytes] */
+    /* Active STM32 LVGL pool. Dashboard initialization needs more than 32 KiB;
+     * 40 KiB still leaves about 28 KiB of unassigned SRAM in the current map. */
+    #define LV_MEM_SIZE (40 * 1024U)          /**< [bytes] */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0
