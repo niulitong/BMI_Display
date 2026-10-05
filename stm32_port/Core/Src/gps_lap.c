@@ -13,9 +13,9 @@
 #if GPS_LAP_ENABLE
 
 #define GPS_LAP_EARTH_RADIUS_M       6371000.0f
-#define GPS_LAP_GATE_HALF_RTK_FIXED_M 6.0f
-#define GPS_LAP_GATE_HALF_RTK_FLOAT_M 10.0f
-#define GPS_LAP_GATE_HALF_SINGLE_M    15.0f
+#define GPS_LAP_GATE_HALF_RTK_FIXED_M 2.5f
+#define GPS_LAP_GATE_HALF_RTK_FLOAT_M 3.0f
+#define GPS_LAP_GATE_HALF_SINGLE_M     4.0f
 #define GPS_LAP_LINE_ARM_DISTANCE_M  10.0f
 #define GPS_LAP_APPROACH_DISTANCE_M  30.0f
 #define GPS_LAP_DIAG_HOLD_MS         2000U
@@ -31,6 +31,9 @@
 #define GPS_LAP_SAMPLE_MAX_DM        32767.0f
 #define GPS_LAP_ENABLE_GEOMETRY      1U
 #define GPS_LAP_ENABLE_LIVE_DELTA    1U
+#define GPS_SPRINT_DISTANCE_M         75.0f
+#define GPS_SPRINT_STEP_MARGIN_M       8.0f
+#define GPS_SPRINT_STEP_FACTOR         3.0f
 
 typedef struct {
 	int16_t x_dm;
@@ -84,6 +87,18 @@ static uint32_t g_lap_last_sample_tick;
 static uint32_t g_lap_ui_last_tick;
 static GPS_LapDiagnostic_t g_lap_diag;
 static uint32_t g_lap_diag_hold_until;
+static GPS_LapLine_t g_sprint_start_line;
+static volatile uint8_t g_sprint_active;
+static volatile uint8_t g_sprint_started;
+static float g_sprint_progress_m;
+static float g_sprint_prev_forward_m;
+static GPS_LapLinePos_t g_sprint_prev_pos;
+static uint32_t g_sprint_prev_tick;
+static float g_sprint_ready_prev_speed_kmh;
+static float g_sprint_ready_prev_latitude;
+static float g_sprint_ready_prev_longitude;
+static uint32_t g_sprint_ready_prev_tick;
+static uint8_t g_sprint_ready_prev_valid;
 
 static float deg_to_radf32(float deg)
 {
@@ -470,11 +485,29 @@ void GPS_Lap_Reset(void)
 	g_lap_diag_hold_until = 0U;
 	(void)memset(&g_lap_diag, 0, sizeof(g_lap_diag));
 	g_lap_diag.state = GPS_LAP_DIAG_INACTIVE;
+	g_sprint_active = 0U;
+	g_sprint_started = 0U;
+	g_sprint_progress_m = 0.0f;
+	g_sprint_prev_forward_m = 0.0f;
+	(void)memset(&g_sprint_prev_pos, 0, sizeof(g_sprint_prev_pos));
+	g_sprint_prev_tick = 0U;
+	g_sprint_ready_prev_speed_kmh = 0.0f;
+	g_sprint_ready_prev_latitude = 0.0f;
+	g_sprint_ready_prev_longitude = 0.0f;
+	g_sprint_ready_prev_tick = 0U;
+	g_sprint_ready_prev_valid = 0U;
+	Dashboard_UI_SetSprintReady(0U);
 }
 
 void GPS_Lap_SetAnalysisActive(uint8_t active)
 {
 	g_lap_analysis_enabled = active != 0U ? 1U : 0U;
+	if(g_lap_analysis_enabled != 0U) {
+		g_sprint_active = 0U;
+		g_sprint_started = 0U;
+		g_sprint_ready_prev_valid = 0U;
+		Dashboard_UI_SetSprintReady(0U);
+	}
 	if(g_lap_analysis_enabled == 0U) {
 		g_lap_active = 0U;
 		g_lap_start_tick = 0U;
@@ -504,6 +537,245 @@ void GPS_Lap_Tick(void)
 	now = HAL_GetTick();
 	g_lap_current_ms = (int32_t)(now - g_lap_start_tick);
 	submit_lap_times_limited(now, 0U);
+}
+
+void GPS_Sprint_Reset(void)
+{
+	GPS_Lap_Reset();
+	Dashboard_UI_SubmitSprintRemaining((int32_t)GPS_SPRINT_DISTANCE_M);
+}
+
+uint8_t GPS_Sprint_StartAtCurrent(const GPS_Data_t * data, float heading_deg)
+{
+	GPS_LapLinePos_t start_pos;
+	uint32_t now;
+
+	if((data == NULL) || (data->valid == 0U)) return 0U;
+	if(coord_valid(data->latitude, data->longitude) == 0U) return 0U;
+	if((finite_f32(data->speed_kmh) == 0U) ||
+	   (data->speed_kmh >= GPS_SPRINT_START_SPEED_KMH)) return 0U;
+	if((finite_f32(heading_deg) == 0U) || (heading_deg < 0.0f) ||
+	   (heading_deg >= 360.0f)) return 0U;
+
+	g_lap_active = 0U;
+	g_lap_analysis_enabled = 0U;
+	g_sprint_start_line.lat = data->latitude;
+	g_sprint_start_line.lon = data->longitude;
+	g_sprint_start_line.track = heading_deg;
+	update_line_vectors(&g_sprint_start_line);
+	start_pos = project_to_line(&g_sprint_start_line, data->latitude, data->longitude);
+	if(line_pos_valid(&start_pos) == 0U) return 0U;
+
+	now = HAL_GetTick();
+	g_sprint_active = 1U;
+	g_sprint_started = 0U;
+	g_sprint_progress_m = 0.0f;
+	g_sprint_prev_forward_m = start_pos.forward_m;
+	g_sprint_prev_pos = start_pos;
+	g_sprint_prev_tick = now;
+	g_sprint_ready_prev_speed_kmh = data->speed_kmh;
+	g_sprint_ready_prev_latitude = data->latitude;
+	g_sprint_ready_prev_longitude = data->longitude;
+	g_sprint_ready_prev_tick = now;
+	g_sprint_ready_prev_valid = 1U;
+	g_lap_start_tick = 0U;
+	g_lap_prev_tick = 0U;
+	g_lap_current_ms = 0;
+	g_lap_delta_ms = 0;
+	g_lap_ui_last_tick = 0U;
+	g_lap_diag_hold_until = 0U;
+	update_diagnostic(GPS_LAP_DIAG_ARMED, &start_pos, data);
+	Dashboard_UI_SubmitLapTimes(0,
+								g_lap_last_ms / 10,
+								g_lap_best_ms / 10,
+								g_lap_count);
+	Dashboard_UI_SubmitLapDelta(0);
+	Dashboard_UI_SubmitSprintRemaining((int32_t)GPS_SPRINT_DISTANCE_M);
+	Dashboard_UI_SetSprintReady(1U);
+	return 1U;
+}
+
+void GPS_Sprint_Cancel(void)
+{
+	if(g_sprint_active == 0U) return;
+	g_sprint_active = 0U;
+	g_sprint_started = 0U;
+	g_lap_current_ms = 0;
+	g_lap_start_tick = 0U;
+	g_sprint_progress_m = 0.0f;
+	g_sprint_prev_forward_m = 0.0f;
+	(void)memset(&g_sprint_prev_pos, 0, sizeof(g_sprint_prev_pos));
+	g_sprint_prev_tick = 0U;
+	g_sprint_ready_prev_valid = 0U;
+	g_lap_diag.state = GPS_LAP_DIAG_INACTIVE;
+	Dashboard_UI_SubmitLapTimes(0,
+								g_lap_last_ms / 10,
+								g_lap_best_ms / 10,
+								g_lap_count);
+	Dashboard_UI_SubmitSprintRemaining((int32_t)GPS_SPRINT_DISTANCE_M);
+	Dashboard_UI_SetSprintReady(0U);
+}
+
+uint8_t GPS_Sprint_IsActive(void)
+{
+	return g_sprint_active;
+}
+
+void GPS_Sprint_Tick(void)
+{
+	uint32_t now;
+	if((g_sprint_active == 0U) || (g_sprint_started == 0U)) return;
+	now = HAL_GetTick();
+	g_lap_current_ms = (int32_t)(now - g_lap_start_tick);
+	submit_lap_times_limited(now, 0U);
+}
+
+void GPS_SprintProcess(const GPS_Data_t * data)
+{
+	GPS_LapLinePos_t curr_pos;
+	GPS_LapLinePos_t finish_pos;
+	GPS_LapLinePos_t launch_pos;
+	float curr_forward;
+	float step_dx;
+	float step_dy;
+	float step_m;
+	float expected_step_m;
+	float max_step_m;
+	float ratio;
+	float denominator;
+	float launch_latitude;
+	float launch_longitude;
+	uint32_t now;
+	uint32_t launch_tick;
+	uint32_t finish_tick;
+	int32_t reference_ms;
+	int32_t remaining_m;
+
+	if(g_sprint_active == 0U) return;
+	if((data == NULL) || (data->valid == 0U)) return;
+	if(coord_valid(data->latitude, data->longitude) == 0U) return;
+	if((finite_f32(data->speed_kmh) == 0U) || (data->speed_kmh < 0.0f)) return;
+
+	now = HAL_GetTick();
+	if(g_sprint_started == 0U) {
+		if((g_sprint_ready_prev_valid == 0U) ||
+		   (data->speed_kmh <= GPS_SPRINT_START_SPEED_KMH)) {
+			g_sprint_ready_prev_speed_kmh = data->speed_kmh;
+			g_sprint_ready_prev_latitude = data->latitude;
+			g_sprint_ready_prev_longitude = data->longitude;
+			g_sprint_ready_prev_tick = now;
+			g_sprint_ready_prev_valid = 1U;
+			curr_pos = project_to_line(&g_sprint_start_line,
+								   data->latitude,
+								   data->longitude);
+			if(line_pos_valid(&curr_pos) != 0U) {
+				update_diagnostic(GPS_LAP_DIAG_ARMED, &curr_pos, data);
+			}
+			return;
+		}
+
+		/* Interpolate both the launch position and tick at the first crossing of
+		 * the movement threshold. This removes almost all of the GNSS sample
+		 * period from the measured 75 m time. */
+		denominator = data->speed_kmh - g_sprint_ready_prev_speed_kmh;
+		ratio = (denominator > 0.001f) ?
+				((GPS_SPRINT_START_SPEED_KMH - g_sprint_ready_prev_speed_kmh) /
+				 denominator) : 1.0f;
+		if(ratio < 0.0f) ratio = 0.0f;
+		if(ratio > 1.0f) ratio = 1.0f;
+		launch_latitude = g_sprint_ready_prev_latitude +
+						  ((data->latitude - g_sprint_ready_prev_latitude) * ratio);
+		launch_longitude = g_sprint_ready_prev_longitude +
+						   ((data->longitude - g_sprint_ready_prev_longitude) * ratio);
+		launch_tick = g_sprint_ready_prev_tick +
+					  (uint32_t)(((float)(now - g_sprint_ready_prev_tick) * ratio) + 0.5f);
+		if(coord_valid(launch_latitude, launch_longitude) == 0U) return;
+
+		g_sprint_start_line.lat = launch_latitude;
+		g_sprint_start_line.lon = launch_longitude;
+		update_line_vectors(&g_sprint_start_line);
+		launch_pos = project_to_line(&g_sprint_start_line, launch_latitude, launch_longitude);
+		curr_pos = project_to_line(&g_sprint_start_line, data->latitude, data->longitude);
+		if((line_pos_valid(&launch_pos) == 0U) || (line_pos_valid(&curr_pos) == 0U)) return;
+
+		g_sprint_ready_prev_valid = 0U;
+		g_sprint_progress_m = 0.0f;
+		g_sprint_prev_forward_m = launch_pos.forward_m;
+		g_sprint_prev_pos = launch_pos;
+		g_sprint_prev_tick = launch_tick;
+		g_lap_start_tick = launch_tick;
+		g_lap_prev_tick = launch_tick;
+		g_lap_current_ms = (int32_t)(now - launch_tick);
+		/* Publish RUNNING only after every timestamp and position anchor is valid. */
+		g_sprint_started = 1U;
+		Dashboard_UI_SetSprintReady(0U);
+	}
+	else {
+		curr_pos = project_to_line(&g_sprint_start_line, data->latitude, data->longitude);
+		if(line_pos_valid(&curr_pos) == 0U) return;
+	}
+	step_dx = curr_pos.forward_m - g_sprint_prev_pos.forward_m;
+	step_dy = curr_pos.lateral_m - g_sprint_prev_pos.lateral_m;
+	step_m = sqrtf((step_dx * step_dx) + (step_dy * step_dy));
+	expected_step_m = data->speed_kmh * (float)(now - g_sprint_prev_tick) / 3600.0f;
+	if(expected_step_m < 0.0f) expected_step_m = 0.0f;
+	max_step_m = GPS_SPRINT_STEP_MARGIN_M +
+				 (expected_step_m * GPS_SPRINT_STEP_FACTOR);
+	/* Reject an isolated valid-status position jump instead of allowing it to
+	 * complete the 75 m run. The accepted anchor is retained for recovery. */
+	if((finite_f32(step_m) == 0U) || (step_m > max_step_m)) return;
+	curr_forward = curr_pos.forward_m;
+	if(curr_forward > g_sprint_progress_m) g_sprint_progress_m = curr_forward;
+	if(g_sprint_progress_m < 0.0f) g_sprint_progress_m = 0.0f;
+	if(g_sprint_progress_m > GPS_SPRINT_DISTANCE_M) {
+		g_sprint_progress_m = GPS_SPRINT_DISTANCE_M;
+	}
+	remaining_m = (int32_t)(GPS_SPRINT_DISTANCE_M - g_sprint_progress_m + 0.999f);
+	if(remaining_m < 0) remaining_m = 0;
+	if(remaining_m > (int32_t)GPS_SPRINT_DISTANCE_M) {
+		remaining_m = (int32_t)GPS_SPRINT_DISTANCE_M;
+	}
+	Dashboard_UI_SubmitSprintRemaining(remaining_m);
+
+	if((g_sprint_prev_forward_m < GPS_SPRINT_DISTANCE_M) &&
+	   (curr_forward >= GPS_SPRINT_DISTANCE_M)) {
+		denominator = curr_forward - g_sprint_prev_forward_m;
+		ratio = (denominator > 0.001f) ?
+				((GPS_SPRINT_DISTANCE_M - g_sprint_prev_forward_m) / denominator) : 1.0f;
+		if(ratio < 0.0f) ratio = 0.0f;
+		if(ratio > 1.0f) ratio = 1.0f;
+		finish_tick = g_sprint_prev_tick +
+					  (uint32_t)(((float)(now - g_sprint_prev_tick) * ratio) + 0.5f);
+		g_lap_current_ms = (int32_t)(finish_tick - g_lap_start_tick);
+		reference_ms = g_lap_best_ms;
+		g_lap_delta_ms = (reference_ms > 0) ? (g_lap_current_ms - reference_ms) : 0;
+		g_lap_last_ms = g_lap_current_ms;
+		if((g_lap_best_ms == 0) || (g_lap_current_ms < g_lap_best_ms)) {
+			g_lap_best_ms = g_lap_current_ms;
+		}
+		g_lap_count++;
+		g_sprint_active = 0U;
+		g_sprint_started = 0U;
+		g_sprint_progress_m = GPS_SPRINT_DISTANCE_M;
+		finish_pos = curr_pos;
+		finish_pos.forward_m = GPS_SPRINT_DISTANCE_M;
+		update_diagnostic(GPS_LAP_DIAG_CROSSED, &finish_pos, data);
+		Dashboard_UI_SubmitLapTimes(g_lap_current_ms / 10,
+									g_lap_last_ms / 10,
+									g_lap_best_ms / 10,
+									g_lap_count);
+		Dashboard_UI_SubmitLapDelta(g_lap_delta_ms / 10);
+		Dashboard_UI_SubmitSprintRemaining(0);
+		Dashboard_UI_PushAlert("75m run complete");
+		return;
+	}
+
+	g_lap_current_ms = (int32_t)(now - g_lap_start_tick);
+	update_diagnostic(GPS_LAP_DIAG_ARMED, &curr_pos, data);
+	submit_lap_times_limited(now, 0U);
+	g_sprint_prev_forward_m = curr_forward;
+	g_sprint_prev_pos = curr_pos;
+	g_sprint_prev_tick = now;
 }
 
 void GPS_Lap_GetDiagnostic(GPS_LapDiagnostic_t * out)

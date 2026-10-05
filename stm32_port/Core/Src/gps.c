@@ -39,6 +39,7 @@ static uint32_t    g_hpr_last_tick;
 static uint32_t    g_gps_rmc_last_tick;
 static uint32_t    g_gps_can_last_tick;
 static uint8_t     g_gps_rmc_valid;
+static uint8_t     g_gps_has_valid_rmc;
 
 static float       g_odometer_prev_latitude;
 static float       g_odometer_prev_longitude;
@@ -243,7 +244,7 @@ static void gps_can_speed_tick(uint32_t now)
 	if(gps_snapshot.heading_valid != 0U) {
 		telemetry.status_flags |= GPS_CAN_STATUS_HEADING_VALID;
 	}
-	if(GPS_Lap_IsAnalysisActive() != 0U) {
+	if((GPS_Lap_IsAnalysisActive() != 0U) || (GPS_Sprint_IsActive() != 0U)) {
 		telemetry.status_flags |= GPS_CAN_STATUS_LAP_ACTIVE;
 	}
 	if(rmc_valid != 0U) {
@@ -623,6 +624,7 @@ static void parse_GNGSV(const char * sentence)
 static void parse_GNRMC(const char * sentence)
 {
 	char stat[4];
+	uint8_t speed_ui_was_active;
 	nmea_get_field(sentence, 2, stat, sizeof(stat));
 	if(stat[0] != 'A') {
 		g_odometer_anchor_valid = 0U;
@@ -630,9 +632,15 @@ static void parse_GNRMC(const char * sentence)
 		taskENTER_CRITICAL();
 		g_gps_speed_kmh_int = 0;
 		g_gps_speed_kmh_centi = 0;
+		speed_ui_was_active = ((g_gps_has_valid_rmc != 0U) &&
+		                       (g_gps_rmc_valid != 0U)) ? 1U : 0U;
 		g_gps_rmc_valid = 0U;
 		taskEXIT_CRITICAL();
-		Dashboard_UI_SubmitSpeed(0);
+		/* Preserve the startup placeholder until the receiver has produced its
+		 * first valid RMC. After takeover, an invalid RMC still clears speed. */
+		if(speed_ui_was_active != 0U) {
+			Dashboard_UI_SubmitSpeed(0);
+		}
 		return;
 	}
 
@@ -657,6 +665,7 @@ static void parse_GNRMC(const char * sentence)
 	g_gps_data.latitude = latitude;
 	g_gps_data.longitude = longitude;
 	g_gps_rmc_valid = 1U;
+	g_gps_has_valid_rmc = 1U;
 	g_gps_rmc_count++;
 	taskEXIT_CRITICAL();
 
@@ -665,6 +674,7 @@ static void parse_GNRMC(const char * sentence)
 		GPS_Data_t lap_data;
 		GPS_GetData(&lap_data);
 		GPS_LapProcess(&lap_data);
+		GPS_SprintProcess(&lap_data);
 	}
 	gps_odometer_process(latitude, longitude, speed_kmh_centi, now);
 }
@@ -824,19 +834,27 @@ static void GPS_SendCmd(const char * cmd)
 static void GPS_TaskFunc(void * argument)
 {
 	TickType_t last_wake_tick;
+	uint32_t boot_timeout;
 
 	(void)argument;
 
-	vTaskDelay(pdMS_TO_TICKS(1500));
-	while(Dashboard_UI_IsStartupComplete() == 0U) {
+	/* Wait for the first valid NMEA sentence: proves the UM982 has finished
+	 * booting and the 115200 link is alive.  Config commands sent during the
+	 * module's own boot are silently dropped. */
+	boot_timeout = HAL_GetTick() + 5000U;
+	while((g_gps_sentence_count == 0U) && (HAL_GetTick() < boot_timeout)) {
+		GPS_SentenceProcess();
 		vTaskDelay(pdMS_TO_TICKS(20));
 	}
 
 	GPS_SendCmd("UNLOG COM2");
 	vTaskDelay(pdMS_TO_TICKS(200));
-	GPS_SendCmd("MODE ROVER");
+	/* Vehicle dynamics profile: up to 100 m/s horizontal speed and lower
+	 * vertical dynamics than the UM982 default UAV profile. */
+	GPS_SendCmd("MODE ROVER AUTOMOTIVE");
 	vTaskDelay(pdMS_TO_TICKS(500));
-	GPS_SendCmd("CONFIG HEADING VARIABLELENGTH");
+	GPS_SendCmd("CONFIG HEADING FIXLENGTH");
+	GPS_SendCmd("CONFIG HEADING LENGTH 111 10");
 	vTaskDelay(pdMS_TO_TICKS(100));
 	GPS_SendCmd("GPGGA 1");
 	vTaskDelay(pdMS_TO_TICKS(100));
@@ -889,8 +907,9 @@ void GPS_Init(void)
 	g_gps_rmc_last_tick = 0U;
 	g_gps_can_last_tick = 0U;
 	g_gps_rmc_valid = 0U;
-	/* Preserve the dashboard's startup placeholder until an RMC sentence is
-	 * actually received. The CAN publisher still uses the internal zero speed. */
+	g_gps_has_valid_rmc = 0U;
+	/* Preserve the dashboard's startup placeholder until the first valid RMC is
+	 * received. The CAN publisher still uses the internal zero speed. */
 	gps_odometer_init();
 
 	BaseType_t ret = xTaskCreate(GPS_TaskFunc, "GPS_Task",

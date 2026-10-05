@@ -7,6 +7,11 @@
 
 static const char g_test_text[] = "Manba Outlaws\r\nSD OK\r\n";
 
+volatile uint32_t g_sd_diag_stage = SD_DIAG_NOT_RUN;
+volatile uint32_t g_sd_diag_fresult;
+volatile uint32_t g_sd_diag_bytes;
+volatile uint32_t g_sd_diag_hal_error;
+
 #define SD_ODOMETER_MAGIC       0x4F444F31UL
 #define SD_ODOMETER_CHECK_SALT  0x6D2B79F5UL
 #define SD_ODOMETER_FILE_A      "0:/ODO_A.DAT"
@@ -60,10 +65,10 @@ uint8_t SD_Odometer_Load(uint32_t * total_m)
     uint8_t valid_b;
 
     if((total_m == NULL) || (g_sd_ready == 0U)) return 0U;
-    if(f_mount(&USERFatFS, USERPath, 1) != FR_OK) return 0U;
+    if(f_mount(&SDFatFS, SDPath, 1) != FR_OK) return 0U;
     valid_a = sd_odometer_read_file(SD_ODOMETER_FILE_A, &record_a);
     valid_b = sd_odometer_read_file(SD_ODOMETER_FILE_B, &record_b);
-    f_mount(NULL, USERPath, 0);
+    f_mount(NULL, SDPath, 0);
 
     if((valid_a != 0U) &&
        ((valid_b == 0U) ||
@@ -88,6 +93,7 @@ static uint8_t sd_odometer_save(uint32_t total_m)
     FIL fil;
     UINT bytes_written = 0U;
     FRESULT fr;
+    FRESULT close_fr;
 
     if(g_sd_ready == 0U) return 0U;
     record.magic = SD_ODOMETER_MAGIC;
@@ -97,16 +103,19 @@ static uint8_t sd_odometer_save(uint32_t total_m)
     path = ((record.sequence & 1U) != 0U) ?
            SD_ODOMETER_FILE_B : SD_ODOMETER_FILE_A;
 
-    if(f_mount(&USERFatFS, USERPath, 1) != FR_OK) return 0U;
+    if(f_mount(&SDFatFS, SDPath, 1) != FR_OK) return 0U;
     fr = f_open(&fil, path, FA_CREATE_ALWAYS | FA_WRITE);
     if(fr == FR_OK) {
         fr = f_write(&fil, &record, sizeof(record), &bytes_written);
         if((fr == FR_OK) && (bytes_written == sizeof(record))) {
             fr = f_sync(&fil);
         }
-        f_close(&fil);
+        close_fr = f_close(&fil);
+        if((fr == FR_OK) && (close_fr != FR_OK)) {
+            fr = close_fr;
+        }
     }
-    f_mount(NULL, USERPath, 0);
+    f_mount(NULL, SDPath, 0);
     if((fr != FR_OK) || (bytes_written != sizeof(record))) return 0U;
     g_sd_odometer_sequence = record.sequence;
     return 1U;
@@ -159,36 +168,84 @@ static void led_red_on(void)  { HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin
 
 void SD_Log_InitAndWrite(const dashboard_data_t * data)
 {
-    FRESULT fr;
+    FRESULT fr = FR_OK;
     FIL     fil;
-    UINT    bw;
+    UINT    bw = 0U;
+    uint8_t file_open = 0U;
 
     (void)data;
 
+    g_sd_diag_stage = SD_DIAG_NOT_RUN;
+    g_sd_diag_fresult = FR_OK;
+    g_sd_diag_bytes = 0U;
+    g_sd_diag_hal_error = hsd.ErrorCode;
+
     if (!g_sd_ready) {
-        led_red_on();                    /* SD init failed */
+        g_sd_diag_stage = SD_DIAG_INIT_FAILED;
+        g_sd_diag_hal_error = hsd.ErrorCode;
+        led_red_on();
         return;
     }
 
-    fr = f_mount(&USERFatFS, USERPath, 1);
+    fr = f_mount(&SDFatFS, SDPath, 1);
     if (fr != FR_OK) {
+        g_sd_diag_stage = SD_DIAG_MOUNT_FAILED;
+        g_sd_diag_fresult = fr;
+        g_sd_diag_hal_error = hsd.ErrorCode;
         led_red_on();
         return;
     }
 
     fr = f_open(&fil, "0:/manba.txt", FA_CREATE_ALWAYS | FA_WRITE);
     if (fr != FR_OK) {
+        g_sd_diag_stage = SD_DIAG_OPEN_FAILED;
+        g_sd_diag_fresult = fr;
+        g_sd_diag_hal_error = hsd.ErrorCode;
         led_red_on();
-        f_mount(NULL, USERPath, 0);
+        f_mount(NULL, SDPath, 0);
         return;
     }
+    file_open = 1U;
 
-    f_write(&fil, g_test_text, sizeof(g_test_text) - 1, &bw);
-    f_close(&fil);
-    f_mount(NULL, USERPath, 0);
+    fr = f_write(&fil, g_test_text, sizeof(g_test_text) - 1U, &bw);
+    g_sd_diag_bytes = bw;
+    if((fr != FR_OK) || (bw != (sizeof(g_test_text) - 1U))) {
+        g_sd_diag_stage = SD_DIAG_WRITE_FAILED;
+        g_sd_diag_fresult = fr;
+        goto log_failed;
+    }
+
+    fr = f_sync(&fil);
+    if(fr != FR_OK) {
+        g_sd_diag_stage = SD_DIAG_SYNC_FAILED;
+        g_sd_diag_fresult = fr;
+        goto log_failed;
+    }
+
+    fr = f_close(&fil);
+    file_open = 0U;
+    if(fr != FR_OK) {
+        g_sd_diag_stage = SD_DIAG_CLOSE_FAILED;
+        g_sd_diag_fresult = fr;
+        goto log_failed;
+    }
+    f_mount(NULL, SDPath, 0);
+
+    g_sd_diag_stage = SD_DIAG_OK;
+    g_sd_diag_fresult = FR_OK;
+    g_sd_diag_hal_error = hsd.ErrorCode;
 
     /* success: green off -> on (visible change) */
     HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_RESET);
     HAL_Delay(300);
     HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_SET);
+    return;
+
+log_failed:
+    g_sd_diag_hal_error = hsd.ErrorCode;
+    if(file_open != 0U) {
+        (void)f_close(&fil);
+    }
+    (void)f_mount(NULL, SDPath, 0);
+    led_red_on();
 }

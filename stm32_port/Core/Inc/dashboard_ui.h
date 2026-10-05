@@ -10,7 +10,7 @@ extern "C" {
 typedef struct {
 	/* Display speed in integer km/h. CAN GPS_Speed uses 0.1 km/h raw units. */
 	int32_t speed;
-	/* BMS(非DBC总线): SOC 0~100% */
+	/* DBC BO_1200 BatterySOC (%) */
 	int32_t soc;
 	/* DBC BO_1289 Debug9: ModeFlag, bit4|4@1- [-8,7] */
 	int32_t mode_index;
@@ -23,11 +23,11 @@ typedef struct {
 	/* DBC BO_1285 Debug5: FR/FL/RR/RL_ActualVelocity (1,0) */
 	/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR */
 	int32_t rpm[4];
-	/* BMS(非DBC总线): 总电压 */
+	/* DBC BO_1200 BatteryVoltage (V, 0.1V/raw /10) */
 	int32_t sum_voltage;
-	/* BMS(非DBC总线): 总电流 */
+	/* DBC BO_1200 BatteryCurrent (A, 0.1A/raw /10, signed) */
 	int32_t sum_current;
-	/* BMS(非DBC总线): 最高温度 */
+	/* 无DBC源: BO_1200无电池温度信号, 保持默认 */
 	int32_t max_temperature;
 	/* DBC BO_1286 Debug6: FR/FL/RR/RL_Motor_temperature (0.1,0) degC */
 	/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR */
@@ -85,6 +85,9 @@ void Dashboard_UI_SubmitTireTemperaturesCenti(uint32_t wheel_index,
 void Dashboard_UI_SubmitSpeed(int32_t speed);
 void Dashboard_UI_SubmitOdometer(int32_t odometer_tenths);
 void Dashboard_UI_SubmitDriveMode(int32_t mode_index);
+/* Non-zero while a sprint/lap timing session is active: drive-mode changes
+ * are rejected by the UI and must not be relayed to the ECU either. */
+uint8_t Dashboard_UI_IsTimingModeLocked(void);
 void Dashboard_UI_SubmitSlipLevel(int32_t slip_level);
 void Dashboard_UI_RequestLapToggle(void);
 void Dashboard_UI_RequestAlertClear(void);
@@ -93,6 +96,10 @@ void Dashboard_UI_SubmitLapTimes(int32_t current_hundredths,
 								 int32_t last_hundredths,
 								 int32_t best_hundredths,
 								 int32_t lap_count);
+/* Remaining distance shown in S-mode, in whole metres (0..75). */
+void Dashboard_UI_SubmitSprintRemaining(int32_t remaining_m);
+/* Show or hide the green S-mode READY prompt in the alert area. */
+void Dashboard_UI_SetSprintReady(uint8_t ready);
 void Dashboard_UI_SubmitSignalLevel(int32_t level);
 void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed);
 void Dashboard_UI_PushAlert(const char * text);

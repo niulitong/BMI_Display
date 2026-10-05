@@ -41,6 +41,7 @@ Core/Src/freertos.o: ../Core/Src/freertos.c \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_sd.h \
+ ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_sdmmc.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_spi.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h \
@@ -467,7 +468,7 @@ Core/Src/freertos.o: ../Core/Src/freertos.c \
  ../Core/Src/../lvgl/src/lv_api_map_v9_2.h \
  ../Core/Src/../lvgl/src/lv_api_map_v9_3.h \
  ../Core/Src/../lvgl/src/lv_api_map_v9_4.h ../Core/Inc/touch.h \
- ../Core/Inc/gps.h
+ ../Core/Inc/gps.h ../Core/Inc/sd_log.h ../Core/Inc/dashboard_ui.h
 ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h:
 ../Core/Inc/FreeRTOSConfig.h:
 ../Middlewares/Third_Party/FreeRTOS/Source/include/projdefs.h:
@@ -511,6 +512,7 @@ Core/Src/freertos.o: ../Core/Src/freertos.c \
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rtc_ex.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_sd.h:
+../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_sdmmc.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_spi.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h:
@@ -942,3 +944,5 @@ Core/Src/freertos.o: ../Core/Src/freertos.c \
 ../Core/Src/../lvgl/src/lv_api_map_v9_4.h:
 ../Core/Inc/touch.h:
 ../Core/Inc/gps.h:
+../Core/Inc/sd_log.h:
+../Core/Inc/dashboard_ui.h:

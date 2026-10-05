@@ -382,11 +382,12 @@ int main(void)
   MX_SPI1_Init();
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
+  MX_SDIO_SD_Init();
   MX_FATFS_Init();
-  MX_I2C1_Init();
   MX_FSMC_Init();
   MX_USART2_UART_Init();
-  MX_SDIO_SD_Init();
+  MX_I2C1_Init();
+  MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
 #if BOARD_BRINGUP_MINIMAL
   BoardBringup_MinimalInit();
@@ -397,7 +398,17 @@ int main(void)
   }
   if(HAL_CAN_ActivateNotification(&hcan1,
                                   CAN_IT_RX_FIFO0_MSG_PENDING |
+                                  CAN_IT_RX_FIFO1_MSG_PENDING |
                                   CAN_IT_TX_MAILBOX_EMPTY) != HAL_OK) {
+    Error_Handler();
+  }
+
+  /* CAN2 = steering wheel bus. RX only; received frames are relayed to CAN1. */
+  CAN2_Filter_Config();
+  if(HAL_CAN_Start(&hcan2) != HAL_OK) {
+    Error_Handler();
+  }
+  if(HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
     Error_Handler();
   }
 
@@ -412,7 +423,6 @@ int main(void)
   LED_Diag_SetBootStage(1);
   LVGL_Port_Init();
   HAL_Delay(10);
-  SD_Log_InitAndWrite(Dashboard_UI_GetCurrentData());
   LCD_Backlight_On();
 #endif
   /* USER CODE END 2 */
@@ -465,7 +475,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLM = 8;
   RCC_OscInitStruct.PLL.PLLN = 336;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 4;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();

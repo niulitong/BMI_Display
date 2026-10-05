@@ -57,12 +57,6 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define IPS_INT_Pin GPIO_PIN_4
-#define IPS_INT_GPIO_Port GPIOG
-#define IPS_RST_Pin GPIO_PIN_5
-#define IPS_RST_GPIO_Port GPIOG
-#define LCD_RST_Pin GPIO_PIN_3
-#define LCD_RST_GPIO_Port GPIOG
 #define TOUCH_CS_Pin GPIO_PIN_13
 #define TOUCH_CS_GPIO_Port GPIOC
 #define LED_RED_Pin GPIO_PIN_12
@@ -73,8 +67,14 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 #define BOARD_BRINGUP_MINIMAL 0
 
-#define SSD1963_RST_Pin LCD_RST_Pin
-#define SSD1963_RST_GPIO_Port LCD_RST_GPIO_Port
+#define SSD1963_RST_Pin GPIO_PIN_3
+#define SSD1963_RST_GPIO_Port GPIOG
+
+/* GT911 capacitive touch: INT -> PG4 (EXTI4), RST -> PG5 (output). */
+#define IPS_INT_Pin GPIO_PIN_4
+#define IPS_INT_GPIO_Port GPIOG
+#define IPS_RST_Pin GPIO_PIN_5
+#define IPS_RST_GPIO_Port GPIOG
 
 /* USER CODE END Private defines */
 

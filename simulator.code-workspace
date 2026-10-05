@@ -20,7 +20,7 @@
 	},
 	// settings.json section
 	"settings": {
-		"cmake.cmakePath":"E:\\lvgl\\cmake-4.1.2-windows-x86_64\\bin\\cmake",
+		"cmake.cmakePath":"c:/Users/lenovo/Desktop/BITFSAE/lvgl/mingw64/bin/cmake.exe",
 		"files.trimTrailingWhitespace": true,
 		"files.insertFinalNewline": true,
 		"files.trimFinalNewlines": true,
@@ -30,6 +30,12 @@
 			"lvgl.h": "c"
 		},
 		"serialFlash.resetMode": "ch340x",
+		"stm32cube-ide-clangd.path": "cube",
+		"stm32cube-ide-clangd.arguments": [
+			"starm-clangd",
+			"--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc*",
+			"--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++*"
+		],
 	},
 	// tasks.json section
 	"tasks": {

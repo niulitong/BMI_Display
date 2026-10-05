@@ -34,21 +34,18 @@ static uint8_t g_can_heartbeat_counter;
 CAN_RxHeaderTypeDef RxHeader;
 uint8_t CAN_RxData[8] = { 0 };
 /* DBC Vehicle_CanB.dbc filter ID list */
-/* Bank0: BMS(0x401,非DBC), DataLogger(0x305 BO_773), Debug2_Torque(0x502 BO_1282), Debug5_Velocity(0x505 BO_1285) */
-uint16_t CAN1_RX_MSG_ID_BANK0[4] = {0x401, 0x305, 0x502, 0x505};
+/* Bank0: BMS_PackStatus(0x4B0 BO_1200), DataLogger(0x305 BO_773), Debug2_Torque(0x502 BO_1282), Debug5_Velocity(0x505 BO_1285) */
+uint16_t CAN1_RX_MSG_ID_BANK0[4] = {0x4B0, 0x305, 0x502, 0x505};
 /* Bank1: Debug6_MotorTemp(0x506 BO_1286), Debug9_Status(0x509 BO_1289), Debug8_IGBT(0x508 BO_1288), Debug7_Inverter(0x507 BO_1287) */
 uint16_t CAN1_RX_MSG_ID_BANK1[4] = {0x506, 0x509, 0x508, 0x507};
 /* Bank2: Debug3_Diag12(0x503 BO_1283), Debug4_Diag34(0x504 BO_1284) */
 uint16_t CAN1_RX_MSG_ID_BANK2[4] = {0x503, 0x504, 0x503, 0x504};
 /* Bank3: IMU_Raw(0x50 BO_80) -> FIFO1 */
 uint16_t CAN1_RX_MSG_ID_BANK3[4] = {0x050, 0x050, 0x050, 0x050};
-/* Bank4: Vehicle_CanB.dbc SteeringPanel(0x700), redundant DriveMode(0x784) */
-uint16_t CAN1_RX_MSG_ID_BANK4[4] = {0x700, 0x784, 0x700, 0x784};
 /* Bank5: Tire-temperature cells 1..16, four cells per frame. */
 uint16_t CAN1_RX_MSG_ID_BANK5[4] = {0x071, 0x072, 0x073, 0x074};
-static uint8_t g_steering_recorder_prev;
-static uint8_t g_steering_error_clear_prev;
-static uint8_t g_steering_mode_seen;
+/* Bank14: Vehicle_CanB.dbc steering wheel on CAN2 - DriveMode(0x310), SlipLevel(0x700), RecorderToggle(0x701), ErrorClear(0x702) */
+uint16_t CAN2_RX_MSG_ID_BANK0[4] = {0x310, 0x700, 0x701, 0x702};
 
 #define CAN_ID_GPS_POSITION        0x067U
 #define CAN_ID_GPS_MOTION          0x068U
@@ -69,15 +66,15 @@ static volatile uint8_t g_user_can_tx_count;
 static volatile uint8_t g_user_can_tx_draining;
 static volatile uint32_t g_user_can_tx_drop_count;
 static dashboard_data_t g_can_dashboard_data = {
-  .speed = 11,             /* Startup placeholder; GPS speed is submitted separately. */
-  .soc = 24,               /* BMS(非DBC总线) */
+  .speed = 24,             /* Startup placeholder; GPS speed is submitted separately. */
+  .soc = 24,               /* DBC BO_1200 BatterySOC (%) */
   .mode_index = 0,         /* DBC BO_1289 Debug9: ModeFlag [-8,7] */
   .torque = {24, 24, 24, 24},     /* DBC BO_1282 Debug2: ActualTorque (1,0) */
   .motor_enable = {1, 1, 1, 1},   /* DBC BO_1289 Debug9: AMK_bEnable */
   .rpm = {24, 24, 24, 24},        /* DBC BO_1285 Debug5: ActualVelocity (1,0) */
-  .sum_voltage = 24,        /* BMS(非DBC总线) */
-  .sum_current = 24,        /* BMS(非DBC总线) */
-  .max_temperature = 24,    /* BMS(非DBC总线) */
+  .sum_voltage = 24,        /* DBC BO_1200 BatteryVoltage (V) */
+  .sum_current = 24,        /* DBC BO_1200 BatteryCurrent (A) */
+  .max_temperature = 24,    /* 无DBC源: BO_1200无电池温度信号 */
   .motor_temp = {48, 47, 49, 50},  /* DBC BO_1286 Debug6: Motor_temperature (0.1,0) degC */
   .aps_open_pct = 0,        /* DBC BO_773 DataLogger: APS_OpenPct (0.1,0) % */
   .steering_angle = 0,      /* DBC BO_773 DataLogger: SteeringWheelAngle (0.1,0) deg */
@@ -347,7 +344,7 @@ void CAN1_Filter_Config(void)
 {
 	CAN_FilterTypeDef CAN_FilterInitStructure;
 
-	/* Bank 0: BMS(0x401,非DBC), DataLogger(0x305 BO_773), Debug2_Torque(0x502 BO_1282), Debug5_Velocity(0x505 BO_1285) */
+	/* Bank 0: BMS_PackStatus(0x4B0 BO_1200), DataLogger(0x305 BO_773), Debug2_Torque(0x502 BO_1282), Debug5_Velocity(0x505 BO_1285) */
 	CAN_FilterInitStructure.FilterActivation = ENABLE;
 	CAN_FilterInitStructure.FilterBank = 0x00;
 	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO0;
@@ -385,15 +382,6 @@ void CAN1_Filter_Config(void)
 	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK3[3] << 5;
 	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
 
-	/* Bank 4: steering wheel event/control packets -> FIFO0 */
-	CAN_FilterInitStructure.FilterBank = 0x04;
-	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO0;
-	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK4[0] << 5;
-	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK4[1] << 5;
-	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK4[2] << 5;
-	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK4[3] << 5;
-	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
-
 	/* Bank 5: tire-temperature frames 0x071..0x074 -> FIFO0 */
 	CAN_FilterInitStructure.FilterBank = 0x05;
 	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO0;
@@ -402,6 +390,35 @@ void CAN1_Filter_Config(void)
 	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK5[2] << 5;
 	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK5[3] << 5;
 	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
+}
+
+/*
+ * @func: CAN2 (steering wheel) filter config
+ * Vehicle_CanB.dbc: steering wheel sits on the CAN2 bus. 0x310 is relayed
+ * verbatim to the ECU while no sprint/lap timing session holds the mode lock;
+ * 0x700/0x701/0x702 are SteeringWheel->Display only and
+ * are merged into a single 0x703 (BO_1795) before being sent to the ECU.
+ *   BO_784  DriveMode_Request 0x310  DriveModeCode byte0 = ASCII '0'..'3' (48..51)
+ *   BO_1792 SlipLevel_0x700   0x700  SlipLevel byte0 [0..7]
+ *   BO_1793 RecorderToggle    0x701  RecorderToggle bit0, sent once per press
+ *   BO_1794 ErrorClear_0x702  0x702  ErrorClearActive bit0, sent once per press
+ */
+void CAN2_Filter_Config(void)
+{
+	CAN_FilterTypeDef CAN_FilterInitStructure;
+
+	/* Bank 14: steering wheel frames 0x310/0x700/0x701/0x702 -> FIFO0 */
+	CAN_FilterInitStructure.FilterActivation = ENABLE;
+	CAN_FilterInitStructure.FilterBank = 14;
+	CAN_FilterInitStructure.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+	CAN_FilterInitStructure.FilterIdHigh = CAN2_RX_MSG_ID_BANK0[0] << 5;
+	CAN_FilterInitStructure.FilterIdLow = CAN2_RX_MSG_ID_BANK0[1] << 5;
+	CAN_FilterInitStructure.FilterMaskIdHigh = CAN2_RX_MSG_ID_BANK0[2] << 5;
+	CAN_FilterInitStructure.FilterMaskIdLow = CAN2_RX_MSG_ID_BANK0[3] << 5;
+	CAN_FilterInitStructure.FilterMode = CAN_FILTERMODE_IDLIST;
+	CAN_FilterInitStructure.FilterScale = CAN_FILTERSCALE_16BIT;
+	CAN_FilterInitStructure.SlaveStartFilterBank = 14;
+	HAL_CAN_ConfigFilter(&hcan2, &CAN_FilterInitStructure);
 }
 
 /*
@@ -507,18 +524,6 @@ void CAN1_SendHeartbeat(void)
   User_CAN_Send_sq(CAN1_ID, heartbeat_data);
 }
 
-void CAN_RequestDriveMode(int32_t mode_index)
-{
-  uint8_t mode_data[8] = {0};
-  static const uint8_t mode_code[4] = {48U, 49U, 50U, 51U};
-
-  if(mode_index < 0) mode_index = 0;
-  if(mode_index > 3) mode_index = 3;
-  mode_data[0] = mode_code[mode_index];
-
-  User_CAN_Send_sq(0x310, mode_data);
-}
-
 void CAN_ServiceTask(void *argument)
 {
   /* USER CODE BEGIN CAN_ServiceTask */
@@ -543,7 +548,8 @@ void CAN_ServiceTask(void *argument)
  *   BO_103..106 GPS telemetry=0x067..0x06A(Display->WirelessGateway),
  *   BO_113..116 tire-temperature cells 1..16=0x071..0x074,
  *   BO_80   IMU_Raw=0x50,
- *   Vehicle_CanB.dbc BO_1792=0x700, BO_1924=0x784
+ *   Vehicle_CanB.dbc BO_1792=0x700(SlipLevel), BO_1793=0x701(RecorderToggle), BO_1794=0x702(ErrorClear),
+ *   all SteeringWheel->Display only; merged into BO_1795=0x703(SteeringCmd, Display->ECU)
  * Wheel order mapping: DBC {RL,RR,FL,FR}(0,1,2,3) -> Dashboard {LF,LR,RF,RR}(0,1,2,3)
  *   dash[0]=LF <- DBC[2]=FL, dash[1]=LR <- DBC[0]=RL,
  *   dash[2]=RF <- DBC[3]=FR, dash[3]=RR <- DBC[1]=RR
@@ -563,8 +569,112 @@ void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef *hcan)
   if((hcan != NULL) && (hcan->Instance == CAN1)) User_CAN_TxQueueDrain();
 }
 
+/*
+ * @func: Send the consolidated steering command 0x703 (DBC BO_1795) to the ECU.
+ * 0x700/0x701/0x702 are SteeringWheel->Display only and must NOT be forwarded
+ * verbatim; the ECU consumes only this merged frame.
+ *   byte0      = SlipLevel 0..7
+ *   byte1 bit0 = RecorderToggle (one-shot)
+ *   byte1 bit1 = ErrorClearActive (one-shot)
+ */
+static void User_CAN_SendSteeringCmd(uint8_t slip_level,
+                                     uint8_t recorder_toggle,
+                                     uint8_t error_clear)
+{
+  uint8_t cmd[2] = {0};
+
+  cmd[0] = slip_level & 0x07U;
+  if(recorder_toggle != 0U) cmd[1] |= 0x01U;
+  if(error_clear != 0U)     cmd[1] |= 0x02U;
+
+  User_CAN_SendDlc(0x703U, cmd, 2U);
+}
+
+static void User_CAN_HandleSteeringWheel(const CAN_RxHeaderTypeDef * rx,
+                                         const uint8_t data[8])
+{
+  static uint8_t s_slip_level = 0U;
+
+  if((rx == NULL) || (data == NULL)) return;
+
+  switch(rx->StdId)
+  {
+    /* Vehicle_CanB.dbc BO_784 DriveMode_Request 0x310: DriveModeCode byte0 = ASCII '0'..'3' (48..51).
+     * Drive mode is relayed verbatim to the ECU, except while a sprint/lap
+     * timing session holds the mode lock: then the request is not relayed and
+     * Dashboard_UI_SubmitDriveMode() raises the MODE LOCK alert instead. */
+    case 0x310:
+    {
+      int32_t mode;
+      if(Dashboard_UI_IsTimingModeLocked() == 0U) {
+        User_CAN_SendDlc(rx->StdId, data, rx->DLC);
+      }
+      if(rx->DLC < 1U) break;
+      mode = (int32_t)data[0] - 48;
+      if(mode < 0) mode = 0;
+      if(mode > 3) mode = 3;
+      Dashboard_UI_SubmitDriveMode(mode);
+      break;
+    }
+
+    /* Vehicle_CanB.dbc BO_1792 SlipLevel 0x700: byte0 [0..7] -> merge into 0x703 */
+    case 0x700:
+    {
+      if((rx->DLC >= 1U) && (data[0] <= 7U)) {
+        s_slip_level = data[0];
+        Dashboard_UI_SubmitSlipLevel((int32_t)data[0]);
+      }
+      User_CAN_SendSteeringCmd(s_slip_level, 0U, 0U);
+      break;
+    }
+
+    /* Vehicle_CanB.dbc BO_1793 RecorderToggle 0x701: bit0, one-shot -> merge into 0x703 */
+    case 0x701:
+    {
+      uint8_t toggle = 0U;
+      if((rx->DLC >= 1U) && ((data[0] & 0x01U) != 0U)) {
+        Dashboard_UI_RequestLapToggle();
+        toggle = 1U;
+      }
+      User_CAN_SendSteeringCmd(s_slip_level, toggle, 0U);
+      break;
+    }
+
+    /* Vehicle_CanB.dbc BO_1794 ErrorClear_0x702: bit0, one-shot -> merge into 0x703 */
+    case 0x702:
+    {
+      uint8_t clear = 0U;
+      if((rx->DLC >= 1U) && ((data[0] & 0x01U) != 0U)) {
+        Dashboard_UI_RequestAlertClear();
+        clear = 1U;
+      }
+      User_CAN_SendSteeringCmd(s_slip_level, 0U, clear);
+      break;
+    }
+
+    default:
+      break;
+  }
+}
+
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
+	/* CAN2 is the steering-wheel bus: relay to CAN1 and update the dashboard. */
+	if(hcan == &hcan2)
+	{
+		CAN_RxHeaderTypeDef rx2;
+		uint8_t data2[8] = {0};
+		if(HAL_CAN_GetRxMessage(hcan, CAN_FILTER_FIFO0, &rx2, data2) != HAL_OK)
+		{
+			Error_Handler();
+		}
+		if(Dashboard_UI_IsStartupComplete() == 0U) {
+			return;
+		}
+		User_CAN_HandleSteeringWheel(&rx2, data2);
+		return;
+	}
+
 	if(HAL_CAN_GetRxMessage(hcan, CAN_FILTER_FIFO0, &RxHeader, CAN_RxData)!= HAL_OK)
 	{
 		Error_Handler();
@@ -590,51 +700,22 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    return;
 	  }
 
-	  /* Vehicle_CanB.dbc BO_1792 SteeringPanel 0x700, event-driven */
-	  case 0x700:
+	  /* DBC BO_1200 BMS_PackStatus 0x4B0, DLC=7:
+	   *   BatteryVoltage(byte0-1,BE,0.1V), BatteryCurrent(byte2-3,BE,int16,0.1A),
+	   *   BatterySOC(byte4,%), validity(byte5), AlarmLevel/State(byte6). */
+	  case 0x4B0:
 	  {
-	    uint8_t recorder;
-	    uint8_t error_clear;
-
-	    if(RxHeader.DLC < 3U) break;
-	    recorder = CAN_RxData[0] & 0x01U;
-	    error_clear = (CAN_RxData[0] >> 1) & 0x01U;
-	    if((recorder != 0U) && (g_steering_recorder_prev == 0U)) {
-	      Dashboard_UI_RequestLapToggle();
+	    uint8_t valid = CAN_RxData[5];
+	    if((valid & 0x01U) != 0U) {  /* PackVoltageValid */
+	      g_can_dashboard_data.sum_voltage = (int32_t)((((uint16_t)CAN_RxData[0] << 8) | (uint16_t)CAN_RxData[1]) / 10);
 	    }
-	    if((error_clear != 0U) && (g_steering_error_clear_prev == 0U)) {
-	      Dashboard_UI_RequestAlertClear();
+	    if((valid & 0x02U) != 0U) {  /* PackCurrentValid */
+	      int16_t curr_raw = (int16_t)(((uint16_t)CAN_RxData[2] << 8) | (uint16_t)CAN_RxData[3]);
+	      g_can_dashboard_data.sum_current = (int32_t)(curr_raw / 10);
 	    }
-	    g_steering_recorder_prev = recorder;
-	    g_steering_error_clear_prev = error_clear;
-
-	    if(CAN_RxData[1] <= 3U) {
-	      g_steering_mode_seen = 1U;
-	      Dashboard_UI_SubmitDriveMode((int32_t)CAN_RxData[1]);
+	    if((valid & 0x04U) != 0U) {  /* SOCValid */
+	      g_can_dashboard_data.soc = (int32_t)CAN_RxData[4];
 	    }
-	    if(CAN_RxData[2] <= 7U) {
-	      Dashboard_UI_SubmitSlipLevel((int32_t)CAN_RxData[2]);
-	    }
-	    break;
-	  }
-
-	  /* Vehicle_CanB.dbc BO_1924 DriveMode 0x784, redundant mode packet */
-	  case 0x784:
-	  {
-	    if((RxHeader.DLC >= 1U) && (CAN_RxData[0] <= 3U)) {
-	      g_steering_mode_seen = 1U;
-	      Dashboard_UI_SubmitDriveMode((int32_t)CAN_RxData[0]);
-	    }
-	    break;
-	  }
-
-	  /* BMS 0x401 - 非DBC/VCI协议: SOC(byte6), Volt(byte0-1), Curr(byte4-5), MaxTemp(byte7) */
-	  case 0x401:
-	  {
-	    g_can_dashboard_data.soc = (int32_t)CAN_RxData[6];
-	    g_can_dashboard_data.sum_voltage = (int32_t)CAN_RxData[0] + ((int32_t)CAN_RxData[1] * 256);
-	    g_can_dashboard_data.sum_current = (int32_t)CAN_RxData[4] + ((int32_t)CAN_RxData[5] * 256);
-	    g_can_dashboard_data.max_temperature = (int32_t)CAN_RxData[7];
 	    break;
 	  }
 
@@ -708,9 +789,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	      int32_t mode_val = (int32_t)((CAN_RxData[0] >> 4) & 0x0FU);
 	      if(mode_val & 8) mode_val -= 16;
 	      g_can_dashboard_data.mode_index = mode_val;
-	      if(g_steering_mode_seen == 0U) {
-	        Dashboard_UI_SubmitDriveMode(mode_val);
-	      }
+	      Dashboard_UI_SubmitDriveMode(mode_val);
 	    }
 	    break;
 	  }

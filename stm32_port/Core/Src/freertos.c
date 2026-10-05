@@ -31,6 +31,7 @@
 #include "../lvgl/lvgl.h"
 #include "touch.h"
 #include "gps.h"
+#include "sd_log.h"
 
 extern void LCD_FillColor(uint16_t color);
 extern volatile uint32_t g_lvgl_flush_count;
@@ -63,6 +64,13 @@ static TaskHandle_t g_dashboard_task_handle;
 volatile uint32_t g_freertos_fault_code;
 volatile const char * g_freertos_fault_task_name;
 
+osThreadId_t touchTaskHandle;
+const osThreadAttr_t touchTask_attributes = {
+  .name = "touchTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -71,15 +79,6 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-
-/* USER CODE BEGIN TouchTask */
-osThreadId_t touchTaskHandle;
-const osThreadAttr_t touchTask_attributes = {
-  .name = "touchTask",
-  .stack_size = 1024 * 2,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* USER CODE END TouchTask */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -164,6 +163,10 @@ void StartDefaultTask(void *argument)
     HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_SET);
     for(;;) { }
   }
+
+  /* Exercise mount/write/sync once after the scheduler starts. The exported
+   * g_sd_diag_* values identify the exact failing layer in a debugger. */
+  SD_Log_InitAndWrite(Dashboard_UI_GetCurrentData());
 
   vTaskDelete(NULL);
   /* Execution must not continue after deleting the bootstrap task. */

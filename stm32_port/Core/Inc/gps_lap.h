@@ -4,6 +4,8 @@
 #include "gps.h"
 
 #define GPS_LAP_ENABLE  1
+/* S-mode launch is detected when GNSS speed crosses this threshold. */
+#define GPS_SPRINT_START_SPEED_KMH  0.5f
 
 typedef enum {
 	GPS_LAP_DIAG_INACTIVE = 0,
@@ -33,6 +35,14 @@ void GPS_Lap_Reset(void);
 void GPS_Lap_SetAnalysisActive(uint8_t active);
 uint8_t GPS_Lap_IsAnalysisActive(void);
 void GPS_Lap_Tick(void);
+/* S-mode straight-line acceleration timer. Arming enters READY; timing starts
+ * at the interpolated speed-threshold crossing and ends at 75.0 m. */
+void GPS_Sprint_Reset(void);
+uint8_t GPS_Sprint_StartAtCurrent(const GPS_Data_t * data, float heading_deg);
+void GPS_Sprint_Cancel(void);
+uint8_t GPS_Sprint_IsActive(void);
+void GPS_Sprint_Tick(void);
+void GPS_SprintProcess(const GPS_Data_t * data);
 void GPS_Lap_GetDiagnostic(GPS_LapDiagnostic_t * out);
 const char * GPS_Lap_GetDeltaStr(char * buf, uint32_t size);
 int32_t GPS_Lap_GetDeltaHundredths(void);
@@ -50,6 +60,12 @@ int32_t GPS_Lap_GetCurrentLapNum(void);
 #define GPS_Lap_SetAnalysisActive(a)     ((void)(a))
 #define GPS_Lap_IsAnalysisActive()       0
 #define GPS_Lap_Tick()                   ((void)0)
+#define GPS_Sprint_Reset()                ((void)0)
+#define GPS_Sprint_StartAtCurrent(d,h)    0
+#define GPS_Sprint_Cancel()               ((void)0)
+#define GPS_Sprint_IsActive()             0
+#define GPS_Sprint_Tick()                 ((void)0)
+#define GPS_SprintProcess(d)              ((void)(d))
 #define GPS_Lap_GetDiagnostic(out)        ((void)(out))
 #define GPS_Lap_GetDeltaStr(b,s)         ("0.00s")
 #define GPS_Lap_GetDeltaHundredths()     0
