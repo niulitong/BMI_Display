@@ -187,3 +187,25 @@ int main(void) {
     /* ... rest of your application ...*/
 }
 ```
+
+## 仪表盘显示项与 CAN 数据来源
+
+PC 模拟器（`src/freertos_main.c`）与 STM32F407 真机固件（`stm32_port/`）保持同一套 UI。
+DBC 以 [vehicle-interfaces](https://github.com/BITFSAE/vehicle-interfaces) 仓库 `can/Vehicle_CanB.dbc` 为准，副本在根目录 `Vehicle_CanB.dbc`。
+
+| 显示项 | 报文 | 说明 |
+| --- | --- | --- |
+| 高压总压/总流/SOC | 0x4B0 BMS_PackStatus | 右上 TOTAL V / TOTAL A |
+| 整车功率 | 由 0x4B0 计算 | P NOW / P PEAK |
+| 油门开度 | 0x305 DataLogger APS_OpenPct | 中央大速度数字右侧绿色条 |
+| 刹车开度 | 非 DBC（brake_pct 字段保留） | 中央大速度数字左侧红色条 |
+| 四电机扭矩/转速/温度 | 0x502 / 0x505 / 0x506 | 底部四列 T / N / Tm |
+| 逆变器温度 | 0x507 Debug7 Inverter_temperature | 底部 Ti，按温度着色 |
+| IGBT 温度 | 0x508 Debug8 | 参与右上面板 MAX T 计算 |
+| 四电机报错码 | 0x503 / 0x504 Diagnostic_number | 底部 E 行，非零红色显示低 16 位 |
+| 低压电压/电流/功率 | 0x5A0 PDM_LowVoltageBus | 右上 LV V / LV A / LV W |
+| 低压电池侧（备用） | 0x5A1 PDM_LowVoltageBattery | 已解析，UI 显示母线值 |
+| 三风扇转速 + PWM 占空比 | 0x5A2 FanController_Status | 右上 F1/F2/F3；DBC 仅两路实测占空比，F3 显示 `--` |
+| MAX T | 0x506/0x507/0x508 取最大 | 电机/逆变器/IGBT 四轮最大值 |
+
+CAN1 过滤器为 ID 白名单模式（`can.c` 中 `CAN1_RX_MSG_ID_BANK*`），新增接收 ID 时需同步更新过滤器表。

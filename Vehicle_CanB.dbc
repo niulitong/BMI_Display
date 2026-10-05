@@ -556,6 +556,23 @@ BO_ 1454 FanController_CalibLimits: 8 FanController
  SG_ ActivePwmCap : 32|8@1+ (1,0) [0|100] "%"  ECU
  SG_ CalibLimitsProtocolVersion : 40|8@1+ (1,0) [0|255] ""  ECU
 
+BO_ 1455 FanController_ProfileStatus: 8 FanController
+ SG_ ProfileProtocolVersion : 0|8@1+ (1,0) [0|4] ""  ECU
+ SG_ RequestedProfile : 8|8@1+ (1,0) [0|2] ""  ECU
+ SG_ EffectiveStrategy1 : 16|4@1+ (1,0) [0|9] ""  ECU
+ SG_ EffectiveStrategy2 : 20|4@1+ (1,0) [0|9] ""  ECU
+ SG_ RuntimeCap1 : 24|8@1+ (1,0) [0|100] "%"  ECU
+ SG_ RuntimeCap2 : 32|8@1+ (1,0) [0|100] "%"  ECU
+ SG_ ProfileLeaseRemaining : 40|8@1+ (1,0) [0|60] "s"  ECU
+ SG_ DerateRequested : 48|1@1+ (1,0) [0|1] ""  ECU
+ SG_ StallLocked1 : 49|1@1+ (1,0) [0|1] ""  ECU
+ SG_ StallLocked2 : 50|1@1+ (1,0) [0|1] ""  ECU
+ SG_ BatteryLowVoltage : 51|1@1+ (1,0) [0|1] ""  ECU
+ SG_ ProfileLeaseActive : 52|1@1+ (1,0) [0|1] ""  ECU
+ SG_ TemperatureInvalid : 53|1@1+ (1,0) [0|1] ""  ECU
+ SG_ SourceState : 56|4@1+ (1,0) [0|5] ""  ECU
+ SG_ LimitReason : 60|4@1+ (1,0) [0|8] ""  ECU
+
 
 
 
@@ -605,10 +622,10 @@ CM_ BO_ 1440 "Low-voltage bus status. All four fields at their invalid raw value
 CM_ BO_ 1441 "Low-voltage battery branch status. Positive current means battery discharge/load consumption; negative means charging. Signed convention validated by serial load test. Energy is accumulated since MCU boot and is not battery state of charge.";
 CM_ BO_ 1442 "Three fan speeds and two measured fan-side PWM duty cycles. 100ms cycle.";
 CM_ BO_ 1443 "Fan faults, input validity, control mode, maximum temperatures and target duty cycles. 500ms cycle. MaxMotorTemp/MaxControllerTemp are 0x7FFF (big-endian int16) when the corresponding source is stale or unavailable; do not treat that as -0.1 C.";
-CM_ BO_ 1444 "Fan control command. Byte 7 is CRC-8/SAE-J1850 over bytes 0 through 6. Opcode 0x08 uses Parameter1 as calibration action: 1 START, 2 UPDATE, 3 STOP, 4 confirm DCDC ready, 5 COMMIT and 6 CLEAR.";
+CM_ BO_ 1444 "V4: 01 control; 04 defaults; 05 query; 08 calibration (P1=1 start/2 update/3 stop, P2=step, P3/P4=PWM1/PWM2 0..100%, P5=lease 1..60s; stop P3..5=0). Calibration actions 4/5/6 and opcodes 02/03/06 unsupported. 09 profile; 0A clear stall locks. Byte0 opcode, Byte1 sequence, Byte2..6 params, Byte7 CRC8 SAE-J1850 over bytes0..6.";
 CM_ BO_ 1445 "Fan command acknowledgement and current control state. AckResult 7 means Flash write or read-back failed; Session remains COMPLETED so COMMIT can be retried.";
 CM_ BO_ 1448 "Fan power arbitration status, including power supply state, limits, independent thermal requests, targets and predicted current. 100ms cycle.";
-CM_ BO_ 1449 "Fan calibration session status. Sent at 100ms while session is ACTIVE/ABORTED/COMPLETED, not when inactive. A calibration session locks the power-supply tier at START and aborts with reason 1 if the tier changes during UPDATE.";
+CM_ BO_ 1449 "V4 calibration status, 500ms and command events, including idle. Uint Intel, scale1 offset0. ParamVersion=4 identifies calibration support; age>1500ms invalid. Flags bit0=output paused until explicit UPDATE. Legacy V3 layout preserved; no Flash cap commit.";
 CM_ BO_ 513 "CANB 标准帧 0x201；Byte3..6 为小端 IEEE-754 float 电压，BMS 接收时要求 DLC 至少为 7。";
 CM_ BO_ 514 "CANB 标准帧 0x202；Byte3..6 为小端 IEEE-754 float 电流，BMS 接收时要求 DLC 至少为 7。";
 CM_ BO_ 516 "CANB 标准帧 0x204；Byte3..6 为小端 uint32，0 表示没有保护状态，BMS 接收时要求 DLC 至少为 7。";
@@ -628,46 +645,53 @@ CM_ BO_ 1318 "赛会能量计功率结果，标准帧 0x526；MUX=0x05，Byte2..
 CM_ BO_ 1320 "赛会能量计 Wh 结果，标准帧 0x528；MUX=0x07，Byte2..5 为大端有符号 int32 Wh；设备可能不发送。";
 CM_ BO_ 2550588916 "CANB 扩展帧 0x1806E5F4，Legacy 充电模式约 1 s；Byte4=1 表示停止。";
 CM_ BO_ 2566869221 "CANB 扩展帧 0x18FF50E5；BMS 接收时要求 DLC 至少为 5，Byte5..7 不参与当前接口。";
-CM_ BO_ 1450 "Battery-box fan status. Sent only after a 0x5AB request: 100 ms during active lease/calibration, otherwise 500 ms within the report window. At least 5% duty is required before a stall is confirmed (5 s no RPM, clear after 2 s RPM); the status flag indicates at least a 5% target was active.";
-CM_ BO_ 1451 "Battery-box fan control, query and power-calibration command. Byte7 is CRC-8 SAE-J1850 over bytes 0..6. Opcode 0x01 SetControl, 0x02 Query, 0x03 CalibrationSession, 0x04 CommitPowerLimits, 0x05 ClearCalibration. Manual/Off and calibration lease time must be 1..60 s; SetControl Auto requires all parameters zero; Off requires duty zero.";
+CM_ BO_ 1450 "Battery-box fan status. Sent continuously from power-on: 100 ms in discharge HV_ON with no Chroma stop request, active command or bench session; 200 ms in Chroma charge/precharge or standby manual/calibration session; 500 ms otherwise. On a period change wait from the last successful send; while Chroma is present on CANB consecutive frames of this ID must be at least 150 ms apart. At least 5% duty is required before a stall is confirmed (5 s no RPM, clear after 2 s RPM); the status flag indicates at least a 5% target was active.";
+CM_ BO_ 1451 "Battery-box fan control, query and power-calibration command. Byte7 is CRC-8 SAE-J1850 over bytes 0..6. Opcode 0x01 SetControl, 0x02 legacy Query (acknowledged without changing report periods), 0x03 CalibrationSession, 0x04 CommitPowerLimits, 0x05 ClearCalibration. Manual/Off and calibration lease time must be 1..60 s; SetControl Auto requires all parameters zero; Off requires duty zero.";
 CM_ BO_ 1452 "Event acknowledgement for 0x5AB. Match both opcode and request counter. Result 7 means external Flash is unavailable; result 6 means a safety condition rejected the command.";
-CM_ BO_ 1453 "Battery-box fan 35 W/70 W caps, Flash-save state and calibration-session status. Sent only in the request report window. Bit1=1 means Flash save is pending or retrying; clear before power-off and verify after a full reset. Valid caps must satisfy 5 <= Chroma <= HV <= 100; otherwise boot restores 55/55.";
-CM_ BO_ 1454 "Vehicle fan battery/DCDC PWM caps, active tier and Flash persistence result. Uncalibrated caps are 15 percent. Valid caps must satisfy 5 <= BatteryTierPwmCap <= DcdcTierPwmCap <= 100; bit1=1 means Flash write/read-back failed. Parameters are committed only once and are independent of the active tier.";
-BA_DEF_ SG_  "SystemSignalLongSymbol" STRING;
+CM_ BO_ 1453 "Battery-box fan 35 W/70 W caps, Flash-save state and calibration-session status. Sent continuously every 500 ms in all states. Bit1=1 means Flash save is pending or retrying; clear before power-off and verify after a full reset. Valid caps must satisfy 5 <= Chroma <= HV <= 100; otherwise boot restores 55/55.";
+CM_ BO_ 1454 "Historical V3 frame. V4 does not transmit; use 0x5AF for profile and per-channel caps.";
+CM_ BO_ 1455 "V4 fixed profile status, 500ms. All fields unsigned Intel, scale1 offset0. No in-frame invalid sentinel; receiver treats age>1500ms as invalid. Version must be4.";
+BA_DEF_ SG_  "SystemSignalLongSymbol" STRING ;
 BA_DEF_ BO_  "GenMsgCycleTime" INT 0 65535;
 BA_DEF_DEF_  "SystemSignalLongSymbol" "";
 BA_DEF_DEF_  "GenMsgCycleTime" 0;
-BA_ "SystemSignalLongSymbol" SG_ 1202 DischargeSustainedOvercurrentLev "DischargeSustainedOvercurrentLevel";
 BA_ "GenMsgCycleTime" BO_ 1440 100;
 BA_ "GenMsgCycleTime" BO_ 1441 100;
 BA_ "GenMsgCycleTime" BO_ 1442 100;
 BA_ "GenMsgCycleTime" BO_ 1443 500;
 BA_ "GenMsgCycleTime" BO_ 1448 100;
-BA_ "GenMsgCycleTime" BO_ 1449 100;
+BA_ "GenMsgCycleTime" BO_ 1449 500;
+BA_ "SystemSignalLongSymbol" SG_ 1202 DischargeSustainedOvercurrentLev "DischargeSustainedOvercurrentLevel";
 BA_ "GenMsgCycleTime" BO_ 1450 100;
 BA_ "GenMsgCycleTime" BO_ 1453 500;
 BA_ "GenMsgCycleTime" BO_ 1454 500;
-VAL_ 1444 CommandOpcode 1 "SetControl" 2 "SetCurveCH1" 3 "SetFailsafe" 4 "RestoreDefaults" 5 "Query" 6 "SetCurveCH2" 8 "SetCalib";
-VAL_ 1445 AckFailsafe 0 "HoldLast" 1 "Fallback" 2 "Full";
-VAL_ 1445 AckMode 0 "Auto" 1 "Manual" 2 "Off";
-VAL_ 1445 AckResult 0 "OK" 1 "BadCRC" 2 "BadLength" 3 "BadValue" 4 "Unsupported" 5 "LeaseExpired" 6 "SafetyAbort" 7 "StorageError";
-VAL_ 1447 FanControlMode 0 "Auto" 1 "Manual" 2 "Off";
-VAL_ 1447 FanFailsafeStrategy 0 "HoldLast" 1 "Fallback" 2 "Full";
-VAL_ 1448 PowerLimitReason 0 "None" 1 "BusLimit" 2 "BatteryLimit" 3 "PdmTimeout" 4 "TransitionHold" 5 "StallHold" 6 "OverTemperature" 7 "SafetyAbort";
-VAL_ 1448 PowerSupplyState 0 "Unknown" 1 "Battery" 2 "Transition" 3 "DcdcReady" 4 "PowerLimited" 5 "DataFault";
-VAL_ 1449 CalibAbortReason 0 "None" 1 "SupplyStateChanged" 2 "PdmTimeout" 3 "PowerLimit" 4 "OverTemp" 5 "FanStall" 6 "LeaseExpired" 7 "UserStop";
-VAL_ 1449 CalibState 0 "Inactive" 1 "Active" 2 "Aborted" 3 "Completed";
-VAL_ 1187 InterventionLevel 0 "Normal" 1 "Derating" 2 "OvercurrentZero" 3 "FaultOrShutdown";
-VAL_ 1200 BatteryState 2 "SelfTest" 3 "Standby" 4 "Precharge" 5 "HighVoltageOn" 7 "FaultHold";
-VAL_ 1200 BatteryAlarmLevel 0 "Normal" 1 "Level1Fault" 2 "Level2Alarm";
-VAL_ 1450 BatteryFanPowerSource 0 "LowVoltageOrDisabled" 1 "Chroma35W" 2 "VehicleHvDcdc70W";
-VAL_ 1450 BatteryFanMode 0 "Auto" 1 "Manual" 2 "Off";
-VAL_ 1451 BatteryFanCommandOpcode 1 "SetControl" 2 "Query" 3 "CalibrationSession" 4 "CommitPowerLimits" 5 "ClearCalibration";
-VAL_ 1452 BatteryFanAckPowerSource 0 "LowVoltageOrDisabled" 1 "Chroma35W" 2 "VehicleHvDcdc70W";
-VAL_ 1452 BatteryFanAckMode 0 "Auto" 1 "Manual" 2 "Off";
-VAL_ 1452 BatteryFanAckResult 0 "OK" 1 "BadCRC" 2 "BadLength" 3 "BadValue" 4 "Unsupported" 5 "LeaseExpired" 6 "SafetyAbort" 7 "StorageUnavailable";
-VAL_ 1453 BatteryFanCalibrationAbortReason 0 "None" 1 "StateChanged" 2 "OverTemperature" 3 "FanStall" 4 "LeaseExpired" 5 "UserStop" 6 "PwmOrTachStartFailure";
-VAL_ 1453 BatteryFanCalibrationState 0 "Inactive" 1 "Active" 2 "Aborted" 3 "Completed";
-VAL_ 1454 ActivePowerTier 0 "Battery" 1 "Dcdc";
+BA_ "GenMsgCycleTime" BO_ 1455 500;
+VAL_ 1444 CommandOpcode 1 "SetControl" 2 "SetCurveCH1" 3 "SetFailsafe" 4 "RestoreDefaults" 5 "Query" 6 "SetCurveCH2" 8 "SetCalib" 9 "SetProfile" 10 "ClearFaults" ;
+VAL_ 1445 AckFailsafe 0 "HoldLast" 1 "Fallback" 2 "Full" ;
+VAL_ 1445 AckMode 0 "Auto" 1 "Manual" 2 "Off" ;
+VAL_ 1445 AckResult 0 "OK" 1 "BadCRC" 2 "BadLength" 3 "BadValue" 4 "Unsupported" 5 "LeaseExpired" 6 "SafetyAbort" 7 "StorageError" ;
+VAL_ 1447 FanControlMode 0 "Auto" 1 "Manual" 2 "Off" ;
+VAL_ 1447 FanFailsafeStrategy 0 "HoldLast" 1 "Fallback" 2 "Full" ;
+VAL_ 1448 PowerLimitReason 0 "None" 1 "BusLimit" 2 "BatteryLimit" 3 "PdmTimeout" 4 "TransitionHold" 5 "StallHold" 6 "OverTemperature" 7 "SafetyAbort" 8 "LowVoltage" ;
+VAL_ 1448 PowerSupplyState 0 "Unknown" 1 "Battery" 2 "Transition" 3 "DcdcReady" 4 "PowerLimited" 5 "DataFault" ;
+VAL_ 1449 CalibAbortReason 0 "None" 1 "SupplyStateChanged" 2 "PdmTimeout" 3 "PowerLimit" 4 "OverTemp" 5 "FanStall" 6 "LeaseExpired" 7 "UserStop" ;
+VAL_ 1449 CalibState 0 "Inactive" 1 "Active" 2 "Aborted" 3 "Completed" ;
+VAL_ 1187 InterventionLevel 0 "Normal" 1 "Derating" 2 "OvercurrentZero" 3 "FaultOrShutdown" ;
+VAL_ 1200 BatteryState 2 "SelfTest" 3 "Standby" 4 "Precharge" 5 "HighVoltageOn" 7 "FaultHold" ;
+VAL_ 1200 BatteryAlarmLevel 0 "Normal" 1 "Level1Fault" 2 "Level2Alarm" ;
+VAL_ 1450 BatteryFanPowerSource 0 "LowVoltageOrDisabled" 1 "Chroma35W" 2 "VehicleHvDcdc70W" ;
+VAL_ 1450 BatteryFanMode 0 "Auto" 1 "Manual" 2 "Off" ;
+VAL_ 1451 BatteryFanCommandOpcode 1 "SetControl" 2 "Query" 3 "CalibrationSession" 4 "CommitPowerLimits" 5 "ClearCalibration" ;
+VAL_ 1452 BatteryFanAckPowerSource 0 "LowVoltageOrDisabled" 1 "Chroma35W" 2 "VehicleHvDcdc70W" ;
+VAL_ 1452 BatteryFanAckMode 0 "Auto" 1 "Manual" 2 "Off" ;
+VAL_ 1452 BatteryFanAckResult 0 "OK" 1 "BadCRC" 2 "BadLength" 3 "BadValue" 4 "Unsupported" 5 "LeaseExpired" 6 "SafetyAbort" 7 "StorageUnavailable" ;
+VAL_ 1453 BatteryFanCalibrationAbortReason 0 "None" 1 "StateChanged" 2 "OverTemperature" 3 "FanStall" 4 "LeaseExpired" 5 "UserStop" 6 "PwmOrTachStartFailure" ;
+VAL_ 1453 BatteryFanCalibrationState 0 "Inactive" 1 "Active" 2 "Aborted" 3 "Completed" ;
+VAL_ 1454 ActivePowerTier 0 "Battery" 1 "Dcdc" ;
+VAL_ 1455 LimitReason 0 "None" 1 "BusLimit" 2 "BatteryLimit" 3 "PdmTimeout" 4 "TransitionHold" 5 "StallHold" 6 "OverTemperature" 7 "SafetyAbort" 8 "LowVoltage" ;
+VAL_ 1455 SourceState 0 "Unknown" 1 "Battery" 2 "Transition" 3 "DcdcReady" 4 "Limited" 5 "DataFault" ;
+VAL_ 1455 EffectiveStrategy2 0 "Conservative" 1 "Default" 2 "Aggressive" 3 "Battery" 4 "StaleHold" 5 "Fallback" 6 "Stopped" 7 "Critical" 8 "Manual" 9 "Calibration" ;
+VAL_ 1455 EffectiveStrategy1 0 "Conservative" 1 "Default" 2 "Aggressive" 3 "Battery" 4 "StaleHold" 5 "Fallback" 6 "Stopped" 7 "Critical" 8 "Manual" 9 "Calibration" ;
+VAL_ 1455 RequestedProfile 0 "Conservative" 1 "Default" 2 "Aggressive" ;
 SIG_VALTYPE_ 513 ChromaVoltage : 1;
 SIG_VALTYPE_ 514 ChromaCurrent : 1;

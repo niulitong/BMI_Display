@@ -27,7 +27,7 @@ typedef struct {
 	int32_t sum_voltage;
 	/* DBC BO_1200 BatteryCurrent (A, 0.1A/raw /10, signed) */
 	int32_t sum_current;
-	/* 无DBC源: BO_1200无电池温度信号, 保持默认 */
+	/* 由can.c计算: max(电机/逆变器/IGBT温度, 四轮) degC, 无温度源时为0 */
 	int32_t max_temperature;
 	/* DBC BO_1286 Debug6: FR/FL/RR/RL_Motor_temperature (0.1,0) degC */
 	/* Wheel order: 0=LF, 1=LR, 2=RF, 3=RR */
@@ -69,6 +69,23 @@ typedef struct {
 	int32_t brake_pct;
 	/* Vehicle_CanB.dbc BO_1792: SlipLevel 0..7 */
 	int32_t slip_level;
+	/* DBC BO_1440 PDM_LowVoltageBus 0x5A0: BusVoltage (0.001V, Motorola int16) */
+	int32_t lv_bus_voltage_mV;
+	/* DBC BO_1440 PDM_LowVoltageBus 0x5A0: BusCurrent (0.01A, Motorola int16) */
+	int32_t lv_bus_current_cA;
+	/* DBC BO_1440 PDM_LowVoltageBus 0x5A0: BusPower (0.1W, Motorola uint16) */
+	int32_t lv_bus_power_dW;
+	/* DBC BO_1441 PDM_LowVoltageBattery 0x5A1: BatteryVoltage (0.001V) */
+	int32_t lv_batt_voltage_mV;
+	/* DBC BO_1441 PDM_LowVoltageBattery 0x5A1: BatteryCurrent (0.01A) */
+	int32_t lv_batt_current_cA;
+	/* DBC BO_1441 PDM_LowVoltageBattery 0x5A1: BatteryPower (0.1W) */
+	int32_t lv_batt_power_dW;
+	/* DBC BO_1442 FanController_Status 0x5A2: Fan1..3_RPM (1rpm) */
+	int32_t fan_rpm[3];
+	/* DBC BO_1442 FanController_Status 0x5A2: Fan_PWM1/2_Duty (1%), 实测占空比;
+	 * DBC 只定义两路实测占空比, Fan3 无独立信号 */
+	int32_t fan_pwm_duty[2];
 } dashboard_data_t;
 
 void Dashboard_UI_Init(void);

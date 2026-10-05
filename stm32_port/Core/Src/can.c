@@ -39,7 +39,11 @@ uint16_t CAN1_RX_MSG_ID_BANK0[4] = {0x4B0, 0x305, 0x502, 0x505};
 /* Bank1: Debug6_MotorTemp(0x506 BO_1286), Debug9_Status(0x509 BO_1289), Debug8_IGBT(0x508 BO_1288), Debug7_Inverter(0x507 BO_1287) */
 uint16_t CAN1_RX_MSG_ID_BANK1[4] = {0x506, 0x509, 0x508, 0x507};
 /* Bank2: Debug3_Diag12(0x503 BO_1283), Debug4_Diag34(0x504 BO_1284) */
-uint16_t CAN1_RX_MSG_ID_BANK2[4] = {0x503, 0x504, 0x503, 0x504};
+/* Bank2: Debug3_Diag12(0x503 BO_1283), Debug4_Diag34(0x504 BO_1284),
+ * PDM_LowVoltageBus(0x5A0 BO_1440), PDM_LowVoltageBattery(0x5A1 BO_1441) */
+uint16_t CAN1_RX_MSG_ID_BANK2[4] = {0x503, 0x504, 0x5A0, 0x5A1};
+/* Bank4: FanController_Status(0x5A2 BO_1442) */
+uint16_t CAN1_RX_MSG_ID_BANK4[4] = {0x5A2, 0x5A2, 0x5A2, 0x5A2};
 /* Bank3: IMU_Raw(0x50 BO_80) -> FIFO1 */
 uint16_t CAN1_RX_MSG_ID_BANK3[4] = {0x050, 0x050, 0x050, 0x050};
 /* Bank5: Tire-temperature cells 1..16, four cells per frame. */
@@ -365,12 +369,21 @@ void CAN1_Filter_Config(void)
 	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK1[3] << 5;
 	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
 
-	/* Bank 2: Debug3_Diag12(0x503), Debug4_Diag34(0x504) */
+	/* Bank 2: Debug3_Diag12(0x503), Debug4_Diag34(0x504),
+	 * PDM_LowVoltageBus(0x5A0 BO_1440), PDM_LowVoltageBattery(0x5A1 BO_1441) */
 	CAN_FilterInitStructure.FilterBank = 0x02;
 	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK2[0] << 5;
 	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK2[1] << 5;
 	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK2[2] << 5;
 	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK2[3] << 5;
+	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
+
+	/* Bank 4: FanController_Status(0x5A2 BO_1442), three fan RPM + two PWM duty */
+	CAN_FilterInitStructure.FilterBank = 0x04;
+	CAN_FilterInitStructure.FilterIdHigh = CAN1_RX_MSG_ID_BANK4[0] << 5;
+	CAN_FilterInitStructure.FilterIdLow = CAN1_RX_MSG_ID_BANK4[1] << 5;
+	CAN_FilterInitStructure.FilterMaskIdHigh = CAN1_RX_MSG_ID_BANK4[2] << 5;
+	CAN_FilterInitStructure.FilterMaskIdLow = CAN1_RX_MSG_ID_BANK4[3] << 5;
 	HAL_CAN_ConfigFilter(&hcan1, &CAN_FilterInitStructure);
 
 	/* Bank 3: IMU_Raw(0x50) -> FIFO1 */
@@ -545,6 +558,8 @@ void CAN_ServiceTask(void *argument)
  *   BO_1286 Debug6=0x506, BO_1285 Debug5=0x505, BO_1282 Debug2=0x502,
  *   BO_1284 Debug4=0x504, BO_1283 Debug3=0x503,
  *   BO_773  DataLogger=0x305, BO_769 GPS_Speed=0x301(Display->ECU),
+ *   BO_1440 PDM_LowVoltageBus=0x5A0, BO_1441 PDM_LowVoltageBattery=0x5A1,
+ *   BO_1442 FanController_Status=0x5A2 (Fan1/2/3_RPM + PWM1/2_Duty),
  *   BO_103..106 GPS telemetry=0x067..0x06A(Display->WirelessGateway),
  *   BO_113..116 tire-temperature cells 1..16=0x071..0x074,
  *   BO_80   IMU_Raw=0x50,
@@ -846,8 +861,70 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	    break;
 	  }
 
+	  /* DBC BO_1440 PDM_LowVoltageBus 0x5A0: BusVoltage(7|16@0- 0.001V),
+	   * BusCurrent(23|16@0- 0.01A), BusPower(39|16@0+ 0.1W), BusEnergy(55|16@0+).
+	   * Stored in raw engineering units: mV / cA / dW. */
+	  case 0x5A0:
+	  {
+	    g_can_dashboard_data.lv_bus_voltage_mV =
+	      (int32_t)(int16_t)(((uint16_t)CAN_RxData[0] << 8) | (uint16_t)CAN_RxData[1]);
+	    g_can_dashboard_data.lv_bus_current_cA =
+	      (int32_t)(int16_t)(((uint16_t)CAN_RxData[2] << 8) | (uint16_t)CAN_RxData[3]);
+	    g_can_dashboard_data.lv_bus_power_dW =
+	      (int32_t)(((uint16_t)CAN_RxData[4] << 8) | (uint16_t)CAN_RxData[5]);
+	    break;
+	  }
+
+	  /* DBC BO_1441 PDM_LowVoltageBattery 0x5A1: battery-side mirror of 0x5A0.
+	   * UI shows the bus values; battery values are kept for diagnostics. */
+	  case 0x5A1:
+	  {
+	    g_can_dashboard_data.lv_batt_voltage_mV =
+	      (int32_t)(int16_t)(((uint16_t)CAN_RxData[0] << 8) | (uint16_t)CAN_RxData[1]);
+	    g_can_dashboard_data.lv_batt_current_cA =
+	      (int32_t)(int16_t)(((uint16_t)CAN_RxData[2] << 8) | (uint16_t)CAN_RxData[3]);
+	    g_can_dashboard_data.lv_batt_power_dW =
+	      (int32_t)(((uint16_t)CAN_RxData[4] << 8) | (uint16_t)CAN_RxData[5]);
+	    break;
+	  }
+
+	  /* DBC BO_1442 FanController_Status 0x5A2, 100ms: Fan1/2/3_RPM (7|16@0+, 1rpm),
+	   * Fan_PWM1_Duty(55|8 %), Fan_PWM2_Duty(63|8 %). The DBC defines only two
+	   * measured duty cycles; fan 3 has no independent duty signal. */
+	  case 0x5A2:
+	  {
+	    uint32_t fan;
+	    for(fan = 0U; fan < 3U; fan++) {
+	      g_can_dashboard_data.fan_rpm[fan] = (int32_t)(
+	        ((uint16_t)CAN_RxData[fan * 2U] << 8) |
+	        (uint16_t)CAN_RxData[fan * 2U + 1U]);
+	    }
+	    g_can_dashboard_data.fan_pwm_duty[0] = (int32_t)CAN_RxData[6];
+	    g_can_dashboard_data.fan_pwm_duty[1] = (int32_t)CAN_RxData[7];
+	    break;
+	  }
+
 	  default:
 	    break;
+    }
+
+    /* MAX T: highest of motor/inverter/IGBT temperature across the four wheels.
+     * Stays 0 until the first Debug6/7/8 frame arrives. */
+    {
+      int32_t max_temp = 0;
+      uint32_t wheel;
+      for(wheel = 0U; wheel < 4U; wheel++) {
+        if(g_can_dashboard_data.motor_temp[wheel] > max_temp) {
+          max_temp = g_can_dashboard_data.motor_temp[wheel];
+        }
+        if(g_can_dashboard_data.inverter_temp[wheel] > max_temp) {
+          max_temp = g_can_dashboard_data.inverter_temp[wheel];
+        }
+        if(g_can_dashboard_data.igbt_temp[wheel] > max_temp) {
+          max_temp = g_can_dashboard_data.igbt_temp[wheel];
+        }
+      }
+      g_can_dashboard_data.max_temperature = max_temp;
     }
 
     Dashboard_UI_SubmitData(&g_can_dashboard_data);

@@ -3,12 +3,27 @@ build/
 bin/
 cmake-build-*/
 
+# Local scratch (simulator screenshots, one-off dumps)
+tmp/
+
 # STM32CubeIDE / generated build outputs
+# 注: stm32_port/Debug 与 stm32_port/MDK-ARM 的构建产物在历史提交中已被跟踪,
+# 规则只阻止新增文件进入版本库; 如需彻底移除请单独 git rm --cached 处理
 stm32_port/Debug/
 stm32_port/Release/
+stm32_display/Debug/
+stm32_display/Release/
+
+# Keil MDK build outputs and per-user GUI state
+stm32_port/MDK-ARM/DATA_COLLECTION_INTEGRAL/
+*.uvguix.*
+*.bak
 
 # Keep hidden project files needed by the repository, ignore local IDE metadata only
 .vscode/
+
+# ZCode workflow drafts (machine-owned)
+.zcode/
 
 # OS files
 .DS_Store
