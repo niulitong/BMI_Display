@@ -198,7 +198,7 @@ DBC 以 [vehicle-interfaces](https://github.com/BITFSAE/vehicle-interfaces) 仓�
 | 高压总压/总流/SOC | 0x4B0 BMS_PackStatus | 右上 TOTAL V / TOTAL A |
 | 整车功率 | 由 0x4B0 计算 | P NOW / P PEAK |
 | 油门开度 | 0x305 DataLogger APS_OpenPct | 中央大速度数字右侧绿色条 |
-| 刹车开度 | 非 DBC（brake_pct 字段保留） | 中央大速度数字左侧红色条 |
+| 刹车开度 | 0x306 BrakePedal_0x306（ECU 网关转发 CANC 0x270 IBS_Info） | 中央大速度数字左侧红色条；源信号为 WCBS AB_BrkPdlPct，20ms |
 | 四电机扭矩/转速/温度 | 0x502 / 0x505 / 0x506 | 底部四列 T / N / Tm |
 | 逆变器温度 | 0x507 Debug7 Inverter_temperature | 底部 Ti，按温度着色 |
 | IGBT 温度 | 0x508 Debug8 | 参与右上面板 MAX T 计算 |
@@ -209,3 +209,8 @@ DBC 以 [vehicle-interfaces](https://github.com/BITFSAE/vehicle-interfaces) 仓�
 | MAX T | 0x506/0x507/0x508 取最大 | 电机/逆变器/IGBT 四轮最大值 |
 
 CAN1 过滤器为 ID 白名单模式（`can.c` 中 `CAN1_RX_MSG_ID_BANK*`），新增接收 ID 时需同步更新过滤器表。
+
+
+### 夜间模式
+
+左侧面板底部的圆形眼睛图标（日间睛开/夜间闭眼）：触摸后背光降至 60%，再触恢复。真机由 PF9 改接 TIM14_CH1 1kHz PWM 控制（用户代码区初始化，不依赖 CubeMX 重生）；模拟器用全屏 40% 黑色遮罩模拟，键盘 n 键可切换。

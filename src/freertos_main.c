@@ -15,6 +15,7 @@
 
 #include "hal/hal.h"
 #include <stdio.h>
+#include <string.h>
 #include <SDL.h>
 
 typedef struct {
@@ -108,6 +109,10 @@ typedef struct {
     /* Large centre-panel pedal bars with live percentage captions */
     lv_obj_t * throttle_pct_label;
     lv_obj_t * brake_pct_label;
+    /* Night-mode toggle: circular EYE icon, dims the screen via a 40% mask */
+    lv_obj_t * night_icon;
+    lv_obj_t * night_icon_label;
+    lv_obj_t * night_mask;
 } dashboard_ui_t;
 
 static dashboard_ui_t g_dashboard;
@@ -171,6 +176,9 @@ static bool Motor_RR_Online = true;
 static int g_signal_level = 0;
 static uint32_t g_demo_alert_index = 0U;
 static volatile bool g_simulator_exit_requested = false;
+/* Night mode: 0 = day, 1 = night. The simulator fakes the 60% backlight with
+ * a 40% black overlay; the MCU dims the real backlight PWM instead. */
+static uint8_t g_night_mode = 0U;
 
 static void apply_main_dashboard_defaults(void);
 
@@ -234,6 +242,13 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define UI_PEDAL_THROTTLE_X 530
 #define UI_PEDAL_PCT_LABEL_Y 286
 #define UI_PEDAL_NAME_LABEL_Y 310
+
+/* Night-mode toggle icon, bottom of the left vehicle panel (same spot as the
+ * MCU build). The overlay dims the whole screen by 40% to fake 60% backlight. */
+#define UI_NIGHT_ICON_X 72
+#define UI_NIGHT_ICON_Y 292
+#define UI_NIGHT_ICON_SIZE 40
+#define UI_NIGHT_MASK_OPA LV_OPA_40
 
 #define UI_SPEED_DIGIT_W 84
 #define UI_SPEED_DIGIT_H 140
@@ -349,6 +364,30 @@ static void pedal_bar_draw_event_cb(lv_event_t * event)
         };
         lv_draw_rect(layer, &tick_dsc, &tick_area);
     }
+}
+
+/* Night mode: flip the EYE glyph and show/hide the dimming overlay. */
+static void update_night_mode_ui(void)
+{
+    if(g_dashboard.night_icon_label != NULL) {
+        lv_label_set_text(g_dashboard.night_icon_label,
+                          g_night_mode ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
+    }
+    if(g_dashboard.night_icon != NULL) {
+        lv_obj_set_style_bg_color(g_dashboard.night_icon,
+                                  g_night_mode ? lv_color_hex(0x555555) : UI_BG_COLOR, 0);
+    }
+    if(g_dashboard.night_mask != NULL) {
+        if(g_night_mode) lv_obj_clear_flag(g_dashboard.night_mask, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(g_dashboard.night_mask, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void night_icon_event_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    g_night_mode = g_night_mode ? 0U : 1U;
+    update_night_mode_ui();
 }
 
 static void apply_vehicle_ui(void)
@@ -796,6 +835,11 @@ static void mode_key_event_cb(lv_event_t * e)
     }
     else if(key == 'r' || key == 'R') {
         simulator_toggle_lap_recording();
+    }
+    else if(key == 'n' || key == 'N') {
+        /* Same path as clicking the EYE icon: toggle night dimming. */
+        g_night_mode = g_night_mode ? 0U : 1U;
+        update_night_mode_ui();
     }
     else if(key == 'f' || key == 'F') {
         simulator_cycle_alert();
@@ -1527,6 +1571,35 @@ void create_main_dashboard_screen(void)
 
     apply_vehicle_ui();
 
+    /* Night-mode toggle: clickable EYE icon under the tires. The overlay on
+     * the top layer dims everything to fake the MCU's 60% backlight. */
+    g_dashboard.night_icon = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(g_dashboard.night_icon);
+    lv_obj_set_pos(g_dashboard.night_icon, UI_NIGHT_ICON_X, UI_NIGHT_ICON_Y);
+    lv_obj_set_size(g_dashboard.night_icon, UI_NIGHT_ICON_SIZE, UI_NIGHT_ICON_SIZE);
+    lv_obj_set_style_radius(g_dashboard.night_icon, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(g_dashboard.night_icon, UI_BG_COLOR, 0);
+    lv_obj_set_style_bg_opa(g_dashboard.night_icon, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(g_dashboard.night_icon, 2, 0);
+    lv_obj_set_style_border_color(g_dashboard.night_icon, UI_BORDER_COLOR, 0);
+    lv_obj_add_flag(g_dashboard.night_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(g_dashboard.night_icon, night_icon_event_cb, LV_EVENT_ALL, NULL);
+
+    g_dashboard.night_icon_label = lv_label_create(g_dashboard.night_icon);
+    lv_obj_set_style_text_font(g_dashboard.night_icon_label, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(g_dashboard.night_icon_label, UI_TEXT_COLOR, 0);
+    lv_obj_align(g_dashboard.night_icon_label, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(g_dashboard.night_icon_label, LV_SYMBOL_EYE_OPEN);
+
+    g_dashboard.night_mask = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(g_dashboard.night_mask);
+    lv_obj_set_pos(g_dashboard.night_mask, 0, 0);
+    lv_obj_set_size(g_dashboard.night_mask, SIM_HOR_RES, SIM_VER_RES);
+    lv_obj_set_style_bg_color(g_dashboard.night_mask, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(g_dashboard.night_mask, UI_NIGHT_MASK_OPA, 0);
+    lv_obj_add_flag(g_dashboard.night_mask, LV_OBJ_FLAG_HIDDEN);
+    update_night_mode_ui();
+
     lv_obj_t * bottom_info = create_panel(screen, 0, UI_BOTTOM_Y, SIM_HOR_RES, UI_BOTTOM_HEIGHT, UI_BG_COLOR, LV_OPA_COVER);
     lv_obj_set_style_border_width(bottom_info, 0, 0);
 
@@ -2141,9 +2214,14 @@ void another_task(void *pvParameters)
  */
 int main(int argc, char **argv)
 {
-    LV_UNUSED(argc);
-    LV_UNUSED(argv);
-    /* Initialize LVGL (Light and Versatile Graphics Library) and other resources */
+    int i;
+    /* --night: start in night mode (60% simulated backlight), used for
+     * screenshot capture where synthetic key injection is unreliable. */
+    for(i = 1; i < argc; i++) {
+        if(strcmp(argv[i], "--night") == 0) {
+            g_night_mode = 1U;
+        }
+    }
 
     /* Create the LVGL task */
     if (xTaskCreate(lvgl_task, "LVGL Task", 4096, NULL, 1, NULL) != pdPASS) {

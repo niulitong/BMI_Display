@@ -42,8 +42,8 @@ uint16_t CAN1_RX_MSG_ID_BANK1[4] = {0x506, 0x509, 0x508, 0x507};
 /* Bank2: Debug3_Diag12(0x503 BO_1283), Debug4_Diag34(0x504 BO_1284),
  * PDM_LowVoltageBus(0x5A0 BO_1440), PDM_LowVoltageBattery(0x5A1 BO_1441) */
 uint16_t CAN1_RX_MSG_ID_BANK2[4] = {0x503, 0x504, 0x5A0, 0x5A1};
-/* Bank4: FanController_Status(0x5A2 BO_1442) */
-uint16_t CAN1_RX_MSG_ID_BANK4[4] = {0x5A2, 0x5A2, 0x5A2, 0x5A2};
+/* Bank4: FanController_Status(0x5A2 BO_1442), BrakePedal forward(0x306 BO_774) */
+uint16_t CAN1_RX_MSG_ID_BANK4[4] = {0x5A2, 0x306, 0x5A2, 0x306};
 /* Bank3: IMU_Raw(0x50 BO_80) -> FIFO1 */
 uint16_t CAN1_RX_MSG_ID_BANK3[4] = {0x050, 0x050, 0x050, 0x050};
 /* Bank5: Tire-temperature cells 1..16, four cells per frame. */
@@ -557,7 +557,8 @@ void CAN_ServiceTask(void *argument)
  *   BO_1289 Debug9=0x509, BO_1288 Debug8=0x508, BO_1287 Debug7=0x507,
  *   BO_1286 Debug6=0x506, BO_1285 Debug5=0x505, BO_1282 Debug2=0x502,
  *   BO_1284 Debug4=0x504, BO_1283 Debug3=0x503,
- *   BO_773  DataLogger=0x305, BO_769 GPS_Speed=0x301(Display->ECU),
+ *   BO_773  DataLogger=0x305, BO_774 BrakePedal_0x306 (ECU gateway forward of
+ *   CANC 0x270 IBS_Info brake pedal), BO_769 GPS_Speed=0x301(Display->ECU),
  *   BO_1440 PDM_LowVoltageBus=0x5A0, BO_1441 PDM_LowVoltageBattery=0x5A1,
  *   BO_1442 FanController_Status=0x5A2 (Fan1/2/3_RPM + PWM1/2_Duty),
  *   BO_103..106 GPS telemetry=0x067..0x06A(Display->WirelessGateway),
@@ -749,6 +750,16 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	      uint16_t oil_raw = (uint16_t)CAN_RxData[4] | ((uint16_t)CAN_RxData[5] << 8);
 	      g_can_dashboard_data.oil_pressure = (int32_t)oil_raw;
 	    }
+	    break;
+	  }
+
+	  /* DBC BO_774 BrakePedal_0x306: ECU gateway forward of CANC 0x270 IBS_Info
+	   * (WCBS). SG_ BrakePedalPct: 0|16@1+ (0.1,0) %, store integer pct;
+	   * SG_ BrakePedalSwtSts: 16|1@1+ (1=pressed). */
+	  case 0x306:
+	  {
+	    uint16_t brake_raw = (uint16_t)CAN_RxData[0] | ((uint16_t)CAN_RxData[1] << 8);
+	    g_can_dashboard_data.brake_pct = (int32_t)(brake_raw / 10U);
 	    break;
 	  }
 

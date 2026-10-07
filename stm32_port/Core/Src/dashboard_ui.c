@@ -92,6 +92,9 @@ typedef struct {
     /* Large centre-panel pedal bars with live percentage captions */
     lv_obj_t * throttle_pct_label;
     lv_obj_t * brake_pct_label;
+    /* Night-mode toggle: circular EYE icon, dims backlight to 60% */
+    lv_obj_t * night_icon;
+    lv_obj_t * night_icon_label;
 } dashboard_ui_t;
 
 typedef enum {
@@ -212,9 +215,12 @@ static volatile uint8_t g_pending_lap_toggle = 0U;
 static volatile uint8_t g_pending_alert_clear = 0U;
 static volatile uint8_t g_pending_mode_lock_alert = 0U;
 static volatile uint8_t g_pending_sprint_ready = 0U;
-static volatile uint8_t g_sprint_ready_dirty = 0U;
+static uint8_t g_sprint_ready_dirty = 0U;
 static uint8_t g_sprint_ready_visible = 0U;
 static uint32_t g_mode_lock_alert_last_tick = 0U;
+/* Night mode: 0 = day (100% backlight), 1 = night (60% backlight). */
+static volatile uint8_t g_pending_night_toggle = 0U;
+static uint8_t g_night_mode = 0U;
 
 #define DASHBOARD_FONT_SMALL (&lv_font_montserrat_18)
 #define DASHBOARD_FONT_MEDIUM (&lv_font_montserrat_18)
@@ -263,6 +269,21 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define ALERT_TOUCH_X_MAX 580
 #define ALERT_TOUCH_Y_MIN UI_MIDDLE_Y
 #define ALERT_TOUCH_Y_MAX (UI_MIDDLE_Y + 72)
+
+/* Night-mode toggle icon in the free bottom area of the left vehicle panel
+ * (absolute screen coordinates: vehicle panel starts at UI_MIDDLE_Y). */
+#define NIGHT_ICON_X 72
+#define NIGHT_ICON_Y 292
+#define NIGHT_ICON_SIZE 40
+#define NIGHT_TOUCH_X_MIN (NIGHT_ICON_X - 6)
+#define NIGHT_TOUCH_X_MAX (NIGHT_ICON_X + NIGHT_ICON_SIZE + 6)
+#define NIGHT_TOUCH_Y_MIN (UI_MIDDLE_Y + NIGHT_ICON_Y - 6)
+#define NIGHT_TOUCH_Y_MAX (UI_MIDDLE_Y + NIGHT_ICON_Y + NIGHT_ICON_SIZE + 6)
+
+/* Backlight dimming: PF9 is reconfigured from plain GPIO output to TIM14_CH1
+ * PWM (AF9). 84 MHz / 84 / 1000 = 1 kHz; night compare = 60% duty. */
+#define BACKLIGHT_PWM_PERIOD 1000U
+#define BACKLIGHT_NIGHT_COMPARE 600U
 
 #define DELTA_BAR_X 450
 #define DELTA_BAR_Y 17
@@ -378,6 +399,64 @@ static void tire_draw_event_cb(lv_event_t * event)
         rect_dsc.bg_color = temp_to_color(g_tire_temp[wheel_index][segment]);
         lv_draw_rect(layer, &rect_dsc, &segment_coords);
     }
+}
+
+/* Backlight PWM on PF9 = TIM14_CH1 (AF9). gpio.c brings PF9 up as a plain
+ * push-pull output (backlight on); this reconfigures the pin to alternate
+ * function and starts a 1 kHz PWM so brightness can be dimmed. */
+static TIM_HandleTypeDef s_backlight_tim;
+
+static void dashboard_backlight_init(void)
+{
+    GPIO_InitTypeDef gpio_init = {0};
+    TIM_OC_InitTypeDef oc_config = {0};
+
+    __HAL_RCC_TIM14_CLK_ENABLE();
+
+    gpio_init.Pin = GPIO_PIN_9;
+    gpio_init.Mode = GPIO_MODE_AF_PP;
+    gpio_init.Pull = GPIO_NOPULL;
+    gpio_init.Speed = GPIO_SPEED_FREQ_LOW;
+    gpio_init.Alternate = GPIO_AF9_TIM14;
+    HAL_GPIO_Init(GPIOF, &gpio_init);
+
+    s_backlight_tim.Instance = TIM14;
+    s_backlight_tim.Init.Prescaler = 83U;                 /* 84 MHz / 84 = 1 MHz */
+    s_backlight_tim.Init.CounterMode = TIM_COUNTERMODE_UP;
+    s_backlight_tim.Init.Period = BACKLIGHT_PWM_PERIOD - 1U; /* -> 1 kHz */
+    s_backlight_tim.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    if(HAL_TIM_PWM_Init(&s_backlight_tim) != HAL_OK) return;
+
+    oc_config.OCMode = TIM_OCMODE_PWM1;
+    oc_config.Pulse = BACKLIGHT_PWM_PERIOD;               /* start fully lit */
+    oc_config.OCPolarity = TIM_OCPOLARITY_HIGH;
+    oc_config.OCFastMode = TIM_OCFAST_DISABLE;
+    if(HAL_TIM_PWM_ConfigChannel(&s_backlight_tim, &oc_config, TIM_CHANNEL_1) != HAL_OK) return;
+    (void)HAL_TIM_PWM_Start(&s_backlight_tim, TIM_CHANNEL_1);
+}
+
+static void dashboard_backlight_set(uint8_t night_mode)
+{
+    /* PWM1 with CCR >= period keeps the output high, i.e. full brightness. */
+    uint32_t compare = (night_mode != 0U) ? BACKLIGHT_NIGHT_COMPARE : BACKLIGHT_PWM_PERIOD;
+    /* update_night_mode_ui() runs once inside Dashboard_UI_Init before
+     * dashboard_backlight_init(); a NULL Instance would write CCR1 at 0x28
+     * (flash alias) and hardfault. PWM starts fully lit, so skipping is fine. */
+    if(s_backlight_tim.Instance == NULL) return;
+    __HAL_TIM_SET_COMPARE(&s_backlight_tim, TIM_CHANNEL_1, compare);
+}
+
+static void update_night_mode_ui(void)
+{
+    if(g_dashboard.night_icon_label != NULL) {
+        lv_label_set_text(g_dashboard.night_icon_label,
+                          (g_night_mode != 0U) ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
+    }
+    if(g_dashboard.night_icon != NULL) {
+        lv_obj_set_style_bg_color(g_dashboard.night_icon,
+                                  (g_night_mode != 0U) ? lv_color_hex(0x555555) : UI_BG_COLOR, 0);
+    }
+    dashboard_backlight_set(g_night_mode);
 }
 
 /* Draw 25/50/75% tick lines inside a pedal bar track without extra objects,
@@ -1741,9 +1820,20 @@ void Dashboard_UI_Process(void)
 	   (g_lap_times_dirty == 0U) && (g_sprint_remaining_dirty == 0U) &&
 	   (g_sprint_ready_dirty == 0U) &&
 	   (g_pending_alert_count == 0U) && (g_pending_alert_pop_count == 0U) &&
-	   (g_pending_lap_toggle == 0U) &&
+	   (g_pending_lap_toggle == 0U) && (g_pending_night_toggle == 0U) &&
        (g_pending_alert_clear == 0U) && (g_pending_mode_lock_alert == 0U)) {
         return;
+    }
+
+    if(g_pending_night_toggle != 0U) {
+        primask = __get_PRIMASK();
+        __disable_irq();
+        g_pending_night_toggle = 0U;
+        if(primask == 0U) {
+            __enable_irq();
+        }
+        g_night_mode = (g_night_mode == 0U) ? 1U : 0U;
+        update_night_mode_ui();
     }
 
     if(g_pending_alert_clear != 0U) {
@@ -2455,6 +2545,26 @@ void Dashboard_UI_Init(void)
 
     apply_vehicle_ui();
 
+    /* Night-mode toggle: circular EYE icon in the free area under the tires.
+     * Touch is handled by Dashboard_UI_SubmitTouchState hit-testing this
+     * rectangle; the EYE glyph flips and the backlight dims to 60%. */
+    g_dashboard.night_icon = lv_obj_create(vehicle_box);
+    lv_obj_remove_style_all(g_dashboard.night_icon);
+    lv_obj_set_pos(g_dashboard.night_icon, NIGHT_ICON_X, NIGHT_ICON_Y);
+    lv_obj_set_size(g_dashboard.night_icon, NIGHT_ICON_SIZE, NIGHT_ICON_SIZE);
+    lv_obj_set_style_radius(g_dashboard.night_icon, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(g_dashboard.night_icon, UI_BG_COLOR, 0);
+    lv_obj_set_style_bg_opa(g_dashboard.night_icon, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(g_dashboard.night_icon, 2, 0);
+    lv_obj_set_style_border_color(g_dashboard.night_icon, UI_BORDER_COLOR, 0);
+
+    g_dashboard.night_icon_label = lv_label_create(g_dashboard.night_icon);
+    lv_obj_set_style_text_font(g_dashboard.night_icon_label, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(g_dashboard.night_icon_label, UI_TEXT_COLOR, 0);
+    lv_obj_align(g_dashboard.night_icon_label, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(g_dashboard.night_icon_label, LV_SYMBOL_EYE_OPEN);
+    update_night_mode_ui();
+
     lv_obj_t * bottom_info = create_panel(screen, 0, UI_BOTTOM_Y, SIM_HOR_RES, UI_BOTTOM_HEIGHT, UI_BG_COLOR, LV_OPA_COVER);
     lv_obj_set_style_border_width(bottom_info, 0, 0);
 
@@ -2818,6 +2928,7 @@ void Dashboard_UI_Init(void)
 
     lv_screen_load(screen);
     dashboard_apply_data(DASH_DIRTY_ALL);
+    dashboard_backlight_init();
 }
 
 void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed)
@@ -2825,11 +2936,14 @@ void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed)
     static uint8_t last_pressed = 0U;
     static uint32_t last_lap_toggle_tick = 0U;
     static uint32_t last_alert_touch_tick = 0U;
+    static uint32_t last_night_toggle_tick = 0U;
     uint32_t now = HAL_GetTick();
     uint8_t in_lap_area = (uint8_t)((x >= LAP_TOUCH_X_MIN) && (x < LAP_TOUCH_X_MAX) &&
                                     (y >= LAP_TOUCH_Y_MIN) && (y < LAP_TOUCH_Y_MAX));
     uint8_t in_alert_area = (uint8_t)((x >= ALERT_TOUCH_X_MIN) && (x < ALERT_TOUCH_X_MAX) &&
                                       (y >= ALERT_TOUCH_Y_MIN) && (y < ALERT_TOUCH_Y_MAX));
+    uint8_t in_night_icon = (uint8_t)((x >= NIGHT_TOUCH_X_MIN) && (x < NIGHT_TOUCH_X_MAX) &&
+                                      (y >= NIGHT_TOUCH_Y_MIN) && (y < NIGHT_TOUCH_Y_MAX));
 
     if((pressed != 0U) && (last_pressed == 0U)) {
         if((in_lap_area != 0U) && ((now - last_lap_toggle_tick) >= 200U)) {
@@ -2841,6 +2955,10 @@ void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed)
             if(g_pending_alert_pop_count < 255U) {
                 g_pending_alert_pop_count++;
             }
+        }
+        else if((in_night_icon != 0U) && ((now - last_night_toggle_tick) >= 200U)) {
+            last_night_toggle_tick = now;
+            g_pending_night_toggle = 1U;
         }
     }
 

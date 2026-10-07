@@ -1,7 +1,7 @@
 VERSION ""
 
 
-NS_ :
+NS_ : 
 	NS_DESC_
 	CM_
 	BA_DEF_
@@ -573,6 +573,10 @@ BO_ 1455 FanController_ProfileStatus: 8 FanController
  SG_ SourceState : 56|4@1+ (1,0) [0|5] ""  ECU
  SG_ LimitReason : 60|4@1+ (1,0) [0|8] ""  ECU
 
+BO_ 774 BrakePedal_0x306: 8 ECU
+ SG_ BrakePedalPct : 0|16@1+ (0.1,0.0) [0|100] "%"  Display
+ SG_ BrakePedalSwtSts : 16|1@1+ (1,0) [0|1] ""  Display
+
 
 
 
@@ -600,14 +604,13 @@ CM_ BO_ 106 "GPS-derived lap timing snapshot, standard CAN ID 0x06A, DLC=8, Disp
 CM_ BO_ 1792 "Steering wheel slip-level packet, standard CAN ID 0x700, DLC=1. Byte0 = SlipLevel 0..7; Display re-packs it into 0x703 for the ECU.";
 CM_ SG_ 1792 SlipLevel "PA1 ADC potentiometer quantized to eight levels: 0..7.";
 CM_ BO_ 1793 "Steering wheel recorder-toggle packet, standard CAN ID 0x701, DLC=1. Bit0 = one-shot recorder toggle; Display merges it into 0x703.";
-CM_ SG_ 1793 RecorderToggle "PB12: 0=Idle, 1=ToggleRecorderCmd. A 250 ms one-shot pulse; Display acts only on the rising edge.";
+CM_ SG_ 1793 RecorderToggle "PB12: 0=Idle, 1=ToggleRecorderCmd. Display acts only on the rising edge. Pulse duration and sender trigger require SteeringWheel confirmation.";
 CM_ BO_ 1794 "Steering wheel error-clear packet, standard CAN ID 0x702, DLC=1. Bit0 = one-shot error clear; Display merges it into 0x703.";
-CM_ SG_ 1794 ErrorClearActive "PB13: 0=Idle, 1=ErrorClear. A 250 ms one-shot pulse; Display acts only on the rising edge.";
+CM_ SG_ 1794 ErrorClearActive "PB13: 0=Idle, 1=ErrorClear. Display acts only on the rising edge. Pulse duration and sender trigger require SteeringWheel confirmation.";
 CM_ BO_ 1795 "Display->ECU steering command, standard CAN ID 0x703, DLC=2. Merged from 0x700/0x701/0x702: byte0 SlipLevel 0..7, byte1 bit0 RecorderToggle, byte1 bit1 ErrorClearActive.";
-CM_ BO_ 1924 "Steering wheel redundant drive-mode packet, standard CAN ID 0x784, DLC=8. Drive mode travels in 0x310; this redundant copy is not consumed by the display and its send condition is pending steering-wheel confirmation.";
-CM_ SG_ 1924 DriveMode "Rotary switch S1-S4: 0=S1/S, 1=S2/Q, 2=S3/C, 3=S4/E, 255=Invalid. The letters S/Q/C/E are the dashboard mode-tile labels and map 1:1 to 0x310 DriveModeCode 48..51.";
-CM_ BO_ 784 "Drive-mode request, standard CAN ID 0x310, Display->ECU, relayed verbatim by the display from the steering-wheel CAN2 segment. DriveModeCode ASCII digits and the 0x784 DriveMode value map to the same four dashboard mode-tile letters.";
-CM_ SG_ 784 DriveModeCode "Drive-mode request: 48='0'=S, 49='1'=Q, 50='2'=C, 51='3'=E, Display->ECU. The letters S/Q/C/E are the dashboard mode-tile labels and map 1:1 to 0x784 DriveMode 0..3.";
+CM_ BO_ 1924 "Steering wheel redundant drive-mode packet, standard CAN ID 0x784, DLC=8. Sender trigger and redundancy policy require SteeringWheel confirmation.";
+CM_ SG_ 1924 DriveMode "Rotary switch S1-S4: 0=S1/S, 1=S2/Q, 2=S3/C, 3=S4/E, 255=Invalid.";
+CM_ SG_ 784 DriveModeCode "Drive mode request: 48=S, 49=Q, 50=C, 51=E, Display->ECU";
 CM_ SG_ 80 IMU_RawData "Payload selected by IMU_SubType; see decoded packets 0x060 through 0x066.";
 CM_ SG_ 80 IMU_SubType "Packet type: 0x50=time, 0x51=acceleration, 0x52=angular velocity, 0x53=angle, 0x54=magnetic field.";
 CM_ SG_ 80 IMU_Header "Fixed frame header 0x55.";
@@ -651,6 +654,9 @@ CM_ BO_ 1452 "Event acknowledgement for 0x5AB. Match both opcode and request cou
 CM_ BO_ 1453 "Battery-box fan 35 W/70 W caps, Flash-save state and calibration-session status. Sent continuously every 500 ms in all states. Bit1=1 means Flash save is pending or retrying; clear before power-off and verify after a full reset. Valid caps must satisfy 5 <= Chroma <= HV <= 100; otherwise boot restores 55/55.";
 CM_ BO_ 1454 "Historical V3 frame. V4 does not transmit; use 0x5AF for profile and per-channel caps.";
 CM_ BO_ 1455 "V4 fixed profile status, 500ms. All fields unsigned Intel, scale1 offset0. No in-frame invalid sentinel; receiver treats age>1500ms as invalid. Version must be4.";
+CM_ BO_ 774 "Gateway forward of CANC 0x270 IBS_Info brake pedal signals (WCBS source, 20ms cycle). BrakePedalPct mirrors AB_BrkPdlPct rescaled to 0.1%/LSB matching 0x305 APS_OpenPct layout; BrakePedalSwtSts mirrors AB_BrkPdlSwtSts.";
+CM_ SG_ 774 BrakePedalSwtSts "Brake pedal switch status, mirrors CANC AB_BrkPdlSwtSts";
+CM_ SG_ 774 BrakePedalPct "Brake pedal percent 0..100%, 0.1%/LSB";
 BA_DEF_ SG_  "SystemSignalLongSymbol" STRING ;
 BA_DEF_ BO_  "GenMsgCycleTime" INT 0 65535;
 BA_DEF_DEF_  "SystemSignalLongSymbol" "";
@@ -666,6 +672,7 @@ BA_ "GenMsgCycleTime" BO_ 1450 100;
 BA_ "GenMsgCycleTime" BO_ 1453 500;
 BA_ "GenMsgCycleTime" BO_ 1454 500;
 BA_ "GenMsgCycleTime" BO_ 1455 500;
+BA_ "GenMsgCycleTime" BO_ 774 20;
 VAL_ 1444 CommandOpcode 1 "SetControl" 2 "SetCurveCH1" 3 "SetFailsafe" 4 "RestoreDefaults" 5 "Query" 6 "SetCurveCH2" 8 "SetCalib" 9 "SetProfile" 10 "ClearFaults" ;
 VAL_ 1445 AckFailsafe 0 "HoldLast" 1 "Fallback" 2 "Full" ;
 VAL_ 1445 AckMode 0 "Auto" 1 "Manual" 2 "Off" ;
@@ -693,5 +700,8 @@ VAL_ 1455 SourceState 0 "Unknown" 1 "Battery" 2 "Transition" 3 "DcdcReady" 4 "Li
 VAL_ 1455 EffectiveStrategy2 0 "Conservative" 1 "Default" 2 "Aggressive" 3 "Battery" 4 "StaleHold" 5 "Fallback" 6 "Stopped" 7 "Critical" 8 "Manual" 9 "Calibration" ;
 VAL_ 1455 EffectiveStrategy1 0 "Conservative" 1 "Default" 2 "Aggressive" 3 "Battery" 4 "StaleHold" 5 "Fallback" 6 "Stopped" 7 "Critical" 8 "Manual" 9 "Calibration" ;
 VAL_ 1455 RequestedProfile 0 "Conservative" 1 "Default" 2 "Aggressive" ;
+VAL_ 774 BrakePedalSwtSts 0 "unpressed" 1 "pressed" ;
 SIG_VALTYPE_ 513 ChromaVoltage : 1;
 SIG_VALTYPE_ 514 ChromaCurrent : 1;
+
+

@@ -65,7 +65,7 @@ typedef struct {
 	uint8_t alert_active;
 	/* 非DBC: 里程(0.1km) */
 	int32_t odometer_tenths;
-	/* 非DBC: 制动百分比 */
+	/* DBC BO_774 BrakePedal_0x306 (网关转发CANC 0x270 IBS_Info): BrakePedalPct (%) */
 	int32_t brake_pct;
 	/* Vehicle_CanB.dbc BO_1792: SlipLevel 0..7 */
 	int32_t slip_level;
