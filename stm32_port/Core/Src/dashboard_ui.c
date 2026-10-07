@@ -283,6 +283,10 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define BACKLIGHT_PWM_PERIOD 1000U
 #define BACKLIGHT_NIGHT_COMPARE 600U
 
+/* Boot-stage LED breadcrumbs implemented in main.c. Stage 3 = this init is
+ * running (RED on), stage 4 = past the night-icon allocation (RED+GREEN). */
+void LED_Diag_SetBootStage(uint8_t stage);
+
 #define DELTA_BAR_X 450
 #define DELTA_BAR_Y 17
 #define DELTA_BAR_W 84
@@ -404,6 +408,21 @@ static void tire_draw_event_cb(lv_event_t * event)
  * function and starts a 1 kHz PWM so brightness can be dimmed. */
 static TIM_HandleTypeDef s_backlight_tim;
 
+/* PWM unavailable: put PF9 back to a plain GPIO output and light the panel.
+ * The screen must never stay dark just because dimming could not start. */
+static void backlight_gpio_fallback(void)
+{
+    GPIO_InitTypeDef gpio_init = {0};
+
+    s_backlight_tim.Instance = NULL;   /* night toggle keeps skipping PWM writes */
+    gpio_init.Pin = GPIO_PIN_9;
+    gpio_init.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio_init.Pull = GPIO_NOPULL;
+    gpio_init.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOF, &gpio_init);
+    HAL_GPIO_WritePin(GPIOF, GPIO_PIN_9, GPIO_PIN_SET);
+}
+
 static void dashboard_backlight_init(void)
 {
     GPIO_InitTypeDef gpio_init = {0};
@@ -423,14 +442,23 @@ static void dashboard_backlight_init(void)
     s_backlight_tim.Init.CounterMode = TIM_COUNTERMODE_UP;
     s_backlight_tim.Init.Period = BACKLIGHT_PWM_PERIOD - 1U; /* -> 1 kHz */
     s_backlight_tim.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-    if(HAL_TIM_PWM_Init(&s_backlight_tim) != HAL_OK) return;
+    if(HAL_TIM_PWM_Init(&s_backlight_tim) != HAL_OK) {
+        backlight_gpio_fallback();
+        return;
+    }
 
     oc_config.OCMode = TIM_OCMODE_PWM1;
     oc_config.Pulse = BACKLIGHT_PWM_PERIOD;               /* start fully lit */
     oc_config.OCPolarity = TIM_OCPOLARITY_HIGH;
     oc_config.OCFastMode = TIM_OCFAST_DISABLE;
-    if(HAL_TIM_PWM_ConfigChannel(&s_backlight_tim, &oc_config, TIM_CHANNEL_1) != HAL_OK) return;
-    (void)HAL_TIM_PWM_Start(&s_backlight_tim, TIM_CHANNEL_1);
+    if(HAL_TIM_PWM_ConfigChannel(&s_backlight_tim, &oc_config, TIM_CHANNEL_1) != HAL_OK) {
+        backlight_gpio_fallback();
+        return;
+    }
+    if(HAL_TIM_PWM_Start(&s_backlight_tim, TIM_CHANNEL_1) != HAL_OK) {
+        backlight_gpio_fallback();
+        return;
+    }
 }
 
 static void dashboard_backlight_set(uint8_t night_mode)
@@ -2089,7 +2117,10 @@ void Dashboard_UI_Process(void)
 
 void Dashboard_UI_Init(void)
 {
-    lv_obj_t * screen = lv_obj_create(NULL);
+    lv_obj_t * screen;
+
+    LED_Diag_SetBootStage(3);
+    screen = lv_obj_create(NULL);
     lv_obj_remove_style_all(screen);
     lv_obj_set_style_bg_color(screen, UI_BG_COLOR, 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
@@ -2545,23 +2576,30 @@ void Dashboard_UI_Init(void)
 
     /* Night-mode toggle: circular EYE icon in the free area under the tires.
      * Touch is handled by Dashboard_UI_SubmitTouchState hit-testing this
-     * rectangle; the EYE glyph flips and the backlight dims to 60%. */
+     * rectangle; the EYE glyph flips and the backlight dims to 60%. Object
+     * creation is belt-and-braces NULL-checked: the LVGL pool is tight, and
+     * the icon is cosmetic while a NULL deref would kill the whole boot. */
     g_dashboard.night_icon = lv_obj_create(vehicle_box);
-    lv_obj_remove_style_all(g_dashboard.night_icon);
-    lv_obj_set_pos(g_dashboard.night_icon, NIGHT_ICON_X, NIGHT_ICON_Y);
-    lv_obj_set_size(g_dashboard.night_icon, NIGHT_ICON_SIZE, NIGHT_ICON_SIZE);
-    lv_obj_set_style_radius(g_dashboard.night_icon, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(g_dashboard.night_icon, UI_BG_COLOR, 0);
-    lv_obj_set_style_bg_opa(g_dashboard.night_icon, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(g_dashboard.night_icon, 2, 0);
-    lv_obj_set_style_border_color(g_dashboard.night_icon, UI_BORDER_COLOR, 0);
+    if(g_dashboard.night_icon != NULL) {
+        lv_obj_remove_style_all(g_dashboard.night_icon);
+        lv_obj_set_pos(g_dashboard.night_icon, NIGHT_ICON_X, NIGHT_ICON_Y);
+        lv_obj_set_size(g_dashboard.night_icon, NIGHT_ICON_SIZE, NIGHT_ICON_SIZE);
+        lv_obj_set_style_radius(g_dashboard.night_icon, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(g_dashboard.night_icon, UI_BG_COLOR, 0);
+        lv_obj_set_style_bg_opa(g_dashboard.night_icon, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(g_dashboard.night_icon, 2, 0);
+        lv_obj_set_style_border_color(g_dashboard.night_icon, UI_BORDER_COLOR, 0);
 
-    g_dashboard.night_icon_label = lv_label_create(g_dashboard.night_icon);
-    lv_obj_set_style_text_font(g_dashboard.night_icon_label, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(g_dashboard.night_icon_label, UI_TEXT_COLOR, 0);
-    lv_obj_align(g_dashboard.night_icon_label, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(g_dashboard.night_icon_label, LV_SYMBOL_EYE_OPEN);
-    update_night_mode_ui();
+        g_dashboard.night_icon_label = lv_label_create(g_dashboard.night_icon);
+        if(g_dashboard.night_icon_label != NULL) {
+            lv_obj_set_style_text_font(g_dashboard.night_icon_label, &lv_font_montserrat_18, 0);
+            lv_obj_set_style_text_color(g_dashboard.night_icon_label, UI_TEXT_COLOR, 0);
+            lv_obj_align(g_dashboard.night_icon_label, LV_ALIGN_CENTER, 0, 0);
+            lv_label_set_text(g_dashboard.night_icon_label, LV_SYMBOL_EYE_OPEN);
+        }
+        update_night_mode_ui();
+    }
+    LED_Diag_SetBootStage(4);
 
     lv_obj_t * bottom_info = create_panel(screen, 0, UI_BOTTOM_Y, SIM_HOR_RES, UI_BOTTOM_HEIGHT, UI_BG_COLOR, LV_OPA_COVER);
     lv_obj_set_style_border_width(bottom_info, 0, 0);

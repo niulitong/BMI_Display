@@ -69,9 +69,12 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /** Size of memory available for `lv_malloc()` in bytes (>= 2kB) */
-    /* Active STM32 LVGL pool. Dashboard initialization needs more than 32 KiB;
-     * 40 KiB still leaves about 28 KiB of unassigned SRAM in the current map. */
-    #define LV_MEM_SIZE (40 * 1024U)          /**< [bytes] */
+    /* Active STM32 LVGL pool. 40 KiB overflowed during Dashboard_UI_Init once
+     * the night-mode EYE icon/label were added (lv_malloc hits LV_ASSERT_HANDLER
+     * = while(1) and the boot freezes with the backlight still off).
+     * 44 KiB leaves ~7 KiB of main SRAM for the MSP stack (image ends near
+     * 0x2001E348, _estack = 0x20020000). */
+    #define LV_MEM_SIZE (44 * 1024U)          /**< [bytes] */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0

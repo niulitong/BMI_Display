@@ -215,6 +215,19 @@ void LED_Diag_SetBootStage(uint8_t stage)
       HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
       break;
 
+    /* Stages 3/4 come from Dashboard_UI_Init (see dashboard_ui.c). The LED
+     * vocabulary has only four patterns, so 3 repeats stage 0 and 4 repeats
+     * stage 1; the boot order disambiguates them. */
+    case 3: /* UI init running, night icon not yet created */
+      HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
+      break;
+
+    case 4: /* UI init past the night-icon allocation */
+      HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
+      break;
+
     default:
       HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
       HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
