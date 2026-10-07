@@ -69,18 +69,21 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /** Size of memory available for `lv_malloc()` in bytes (>= 2kB) */
-    /* Active STM32 LVGL pool. 40 KiB overflowed during Dashboard_UI_Init once
-     * the night-mode EYE icon/label were added (lv_malloc hits LV_ASSERT_HANDLER
-     * = while(1) and the boot freezes with the backlight still off).
-     * 44 KiB leaves ~7 KiB of main SRAM for the MSP stack (image ends near
-     * 0x2001E348, _estack = 0x20020000). */
-    #define LV_MEM_SIZE (44 * 1024U)          /**< [bytes] */
+    /* 2026-10-07: the dashboard UI needs far more than the old 40/44 KiB pool.
+     * A simulator run of the same UI measured ~58 KiB steady plus a transient
+     * peak; with the 44 KiB pool lv_malloc ran out mid-boot and LV_ASSERT_HANDLER
+     * (= while(1)) froze the firmware. The pool now lives in the 64 KiB CCM RAM
+     * (LV_MEM_ADR below) which the CPU alone can access - exactly how LVGL uses
+     * it. 60 KiB keeps 4 KiB of CCM free; main SRAM gains ~50 KiB of stack room. */
+    #define LV_MEM_SIZE (60 * 1024U)          /**< [bytes] */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0
 
     /** Set an address for the memory pool instead of allocating it as a normal array. Can be in external SRAM too. */
-    #define LV_MEM_ADR 0     /**< 0: unused*/
+    /* CCM RAM base. Nothing else in the project uses CCM (the .ccmram section is
+     * empty); CCMDATARAMEN is enabled out of reset on STM32F407. */
+    #define LV_MEM_ADR 0x10000000U     /**< 0: unused*/
     /* Instead of an address give a memory allocator that will be called to get a memory pool for LVGL. E.g. my_malloc */
     #if LV_MEM_ADR == 0
         #undef LV_MEM_POOL_INCLUDE

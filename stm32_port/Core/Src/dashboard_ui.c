@@ -2965,6 +2965,7 @@ void Dashboard_UI_Init(void)
     lv_screen_load(screen);
     dashboard_apply_data(DASH_DIRTY_ALL);
     dashboard_backlight_init();
+    LED_Diag_SetBootStage(5);   /* both LEDs off: UI init fully complete */
 }
 
 void Dashboard_UI_SubmitTouchState(uint16_t x, uint16_t y, uint8_t pressed)

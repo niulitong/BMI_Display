@@ -228,6 +228,11 @@ void LED_Diag_SetBootStage(uint8_t stage)
       HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_SET);
       break;
 
+    case 5: /* UI init fully complete (pool + backlight done) */
+      HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
+      break;
+
     default:
       HAL_GPIO_WritePin(GPIOD, LED_RED_Pin, GPIO_PIN_RESET);
       HAL_GPIO_WritePin(GPIOD, LED_GREEN_Pin, GPIO_PIN_RESET);
