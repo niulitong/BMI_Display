@@ -39,7 +39,7 @@ static uint32_t    g_hpr_last_tick;
 static uint32_t    g_gps_rmc_last_tick;
 static uint32_t    g_gps_can_last_tick;
 static uint8_t     g_gps_rmc_valid;
-static uint8_t     g_gps_has_valid_rmc;
+static uint32_t    g_gps_speed_ui_alive_tick;
 
 static float       g_odometer_prev_latitude;
 static float       g_odometer_prev_longitude;
@@ -54,6 +54,11 @@ static uint8_t     g_odometer_anchor_valid;
 #define GPS_HPR_EXPIRE_MS               1500U
 #define GPS_CAN_SPEED_PERIOD_MS            50U
 #define GPS_CAN_SPEED_STALE_MS             500U
+/* How long the dashboard keeps showing the last valid speed after RMC stops
+ * arriving (or arrives with V status). Bridges brief receiver dropouts without
+ * freezing a stale value for long. CAN telemetry still reports zero/invalid
+ * after the 500 ms stale window. */
+#define GPS_SPEED_UI_HOLD_MS              3000U
 #define GPS_CAN_STATUS_POSITION_VALID      (1U << 0)
 #define GPS_CAN_STATUS_HEADING_VALID       (1U << 1)
 #define GPS_CAN_STATUS_LAP_ACTIVE          (1U << 2)
@@ -195,7 +200,6 @@ static uint8_t gps_clamp_u8(int32_t value)
 static void gps_can_speed_tick(uint32_t now)
 {
 	int32_t speed_kmh_centi;
-	uint8_t speed_became_stale = 0U;
 	uint8_t rmc_valid;
 	GPS_Data_t gps_snapshot;
 	GPS_LapDiagnostic_t lap_diagnostic;
@@ -207,12 +211,17 @@ static void gps_can_speed_tick(uint32_t now)
 		if((g_gps_speed_kmh_centi != 0) || (g_gps_speed_kmh_int != 0)) {
 			g_gps_speed_kmh_centi = 0;
 			g_gps_speed_kmh_int = 0;
-			speed_became_stale = 1U;
 		}
 		g_gps_rmc_valid = 0U;
 		taskEXIT_CRITICAL();
 	}
-	if(speed_became_stale != 0U) {
+
+	/* UI hold: keep the last displayed speed through short RMC outages and
+	 * clear it only once no valid sentence has arrived for the hold window.
+	 * g_gps_speed_ui_alive_tick == 0 keeps the startup placeholder intact. */
+	if((g_gps_speed_ui_alive_tick != 0U) &&
+	   ((now - g_gps_speed_ui_alive_tick) > GPS_SPEED_UI_HOLD_MS)) {
+		g_gps_speed_ui_alive_tick = 0U;
 		Dashboard_UI_SubmitSpeed(0);
 	}
 
@@ -624,23 +633,17 @@ static void parse_GNGSV(const char * sentence)
 static void parse_GNRMC(const char * sentence)
 {
 	char stat[4];
-	uint8_t speed_ui_was_active;
 	nmea_get_field(sentence, 2, stat, sizeof(stat));
 	if(stat[0] != 'A') {
 		g_odometer_anchor_valid = 0U;
 		g_gps_rmc_last_tick = HAL_GetTick();
 		taskENTER_CRITICAL();
+		/* CAN telemetry reports zero immediately on an invalid fix; the
+		 * display keeps its last speed until the UI hold window expires. */
 		g_gps_speed_kmh_int = 0;
 		g_gps_speed_kmh_centi = 0;
-		speed_ui_was_active = ((g_gps_has_valid_rmc != 0U) &&
-		                       (g_gps_rmc_valid != 0U)) ? 1U : 0U;
 		g_gps_rmc_valid = 0U;
 		taskEXIT_CRITICAL();
-		/* Preserve the startup placeholder until the receiver has produced its
-		 * first valid RMC. After takeover, an invalid RMC still clears speed. */
-		if(speed_ui_was_active != 0U) {
-			Dashboard_UI_SubmitSpeed(0);
-		}
 		return;
 	}
 
@@ -665,11 +668,11 @@ static void parse_GNRMC(const char * sentence)
 	g_gps_data.latitude = latitude;
 	g_gps_data.longitude = longitude;
 	g_gps_rmc_valid = 1U;
-	g_gps_has_valid_rmc = 1U;
 	g_gps_rmc_count++;
 	taskEXIT_CRITICAL();
 
 	Dashboard_UI_SubmitSpeed(speed_kmh);
+	g_gps_speed_ui_alive_tick = now;
 	{
 		GPS_Data_t lap_data;
 		GPS_GetData(&lap_data);
@@ -854,6 +857,9 @@ static void GPS_TaskFunc(void * argument)
 	GPS_SendCmd("MODE ROVER AUTOMOTIVE");
 	vTaskDelay(pdMS_TO_TICKS(500));
 	GPS_SendCmd("CONFIG HEADING FIXLENGTH");
+	/* Fixed baseline: 111 cm with +/-10 cm tolerance (both parameters are in
+	 * centimetres per the NebulasIV interface protocol; parameter 2 is the
+	 * acceptable error range, not a variance in m^2). */
 	GPS_SendCmd("CONFIG HEADING LENGTH 111 10");
 	vTaskDelay(pdMS_TO_TICKS(100));
 	GPS_SendCmd("GPGGA 1");
@@ -907,7 +913,7 @@ void GPS_Init(void)
 	g_gps_rmc_last_tick = 0U;
 	g_gps_can_last_tick = 0U;
 	g_gps_rmc_valid = 0U;
-	g_gps_has_valid_rmc = 0U;
+	g_gps_speed_ui_alive_tick = 0U;
 	/* Preserve the dashboard's startup placeholder until the first valid RMC is
 	 * received. The CAN publisher still uses the internal zero speed. */
 	gps_odometer_init();

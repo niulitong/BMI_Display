@@ -244,11 +244,11 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define UI_PEDAL_NAME_LABEL_Y 310
 
 /* Night-mode toggle icon, bottom of the left vehicle panel (same spot as the
- * MCU build). The overlay dims the whole screen by 40% to fake 60% backlight. */
+ * MCU build). The overlay dims the whole screen by 55% to fake 45% backlight. */
 #define UI_NIGHT_ICON_X 72
 #define UI_NIGHT_ICON_Y 292
 #define UI_NIGHT_ICON_SIZE 40
-#define UI_NIGHT_MASK_OPA LV_OPA_40
+#define UI_NIGHT_MASK_OPA ((lv_opa_t)140) /* 140/255 = 55% dimming */
 
 #define UI_SPEED_DIGIT_W 84
 #define UI_SPEED_DIGIT_H 140
@@ -2215,7 +2215,7 @@ void another_task(void *pvParameters)
 int main(int argc, char **argv)
 {
     int i;
-    /* --night: start in night mode (60% simulated backlight), used for
+    /* --night: start in night mode (45% simulated backlight), used for
      * screenshot capture where synthetic key injection is unreliable. */
     for(i = 1; i < argc; i++) {
         if(strcmp(argv[i], "--night") == 0) {

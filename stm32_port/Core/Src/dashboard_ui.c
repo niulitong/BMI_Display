@@ -279,9 +279,9 @@ static const uint8_t g_speed_digit_map[10][7] = {
 #define NIGHT_TOUCH_Y_MAX (UI_MIDDLE_Y + NIGHT_ICON_Y + NIGHT_ICON_SIZE + 6)
 
 /* Backlight dimming: PF9 is reconfigured from plain GPIO output to TIM14_CH1
- * PWM (AF9). 84 MHz / 84 / 1000 = 1 kHz; night compare = 60% duty. */
+ * PWM (AF9). 84 MHz / 84 / 1000 = 1 kHz; night compare = 45% duty. */
 #define BACKLIGHT_PWM_PERIOD 1000U
-#define BACKLIGHT_NIGHT_COMPARE 600U
+#define BACKLIGHT_NIGHT_COMPARE 450U
 
 /* Boot-stage LED breadcrumbs implemented in main.c. Stage 3 = this init is
  * running (RED on), stage 4 = past the night-icon allocation (RED+GREEN). */

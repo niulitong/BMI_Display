@@ -718,20 +718,15 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 
 	  /* DBC BO_1200 BMS_PackStatus 0x4B0, DLC=7:
 	   *   BatteryVoltage(byte0-1,BE,0.1V), BatteryCurrent(byte2-3,BE,int16,0.1A),
-	   *   BatterySOC(byte4,%), validity(byte5), AlarmLevel/State(byte6). */
+	   *   BatterySOC(byte4,%), validity(byte5), AlarmLevel/State(byte6).
+	   * The on-car BMS often sends the validity byte without all bits set, so
+	   * the display takes the data bytes unconditionally and ignores byte5. */
 	  case 0x4B0:
 	  {
-	    uint8_t valid = CAN_RxData[5];
-	    if((valid & 0x01U) != 0U) {  /* PackVoltageValid */
-	      g_can_dashboard_data.sum_voltage = (int32_t)((((uint16_t)CAN_RxData[0] << 8) | (uint16_t)CAN_RxData[1]) / 10);
-	    }
-	    if((valid & 0x02U) != 0U) {  /* PackCurrentValid */
-	      int16_t curr_raw = (int16_t)(((uint16_t)CAN_RxData[2] << 8) | (uint16_t)CAN_RxData[3]);
-	      g_can_dashboard_data.sum_current = (int32_t)(curr_raw / 10);
-	    }
-	    if((valid & 0x04U) != 0U) {  /* SOCValid */
-	      g_can_dashboard_data.soc = (int32_t)CAN_RxData[4];
-	    }
+	    g_can_dashboard_data.sum_voltage = (int32_t)((((uint16_t)CAN_RxData[0] << 8) | (uint16_t)CAN_RxData[1]) / 10);
+	    int16_t curr_raw = (int16_t)(((uint16_t)CAN_RxData[2] << 8) | (uint16_t)CAN_RxData[3]);
+	    g_can_dashboard_data.sum_current = (int32_t)(curr_raw / 10);
+	    g_can_dashboard_data.soc = (int32_t)CAN_RxData[4];
 	    break;
 	  }
 
